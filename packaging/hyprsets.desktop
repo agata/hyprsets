@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=HyprSets
+Comment=Launch and edit Hyprland worksets
+Exec=alacritty --class TUI.float -e __HYPRSETS_BIN__
+Icon=hyprsets
+Terminal=false
+Categories=Utility;
+Keywords=Hyprland;launcher;workspaces;tiling;TUI;
+StartupNotify=true

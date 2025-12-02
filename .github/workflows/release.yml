@@ -1,0 +1,56 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --all-features --locked
+
+      - name: Build package
+        run: ./scripts/package.sh --skip-checks
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: hyprsets-dist
+          path: |
+            dist/hyprsets-*.tar.gz
+            dist/hyprsets-*.tar.gz.sha256
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            dist/hyprsets-*.tar.gz
+            dist/hyprsets-*.tar.gz.sha256
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

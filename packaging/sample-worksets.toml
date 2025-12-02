@@ -1,0 +1,26 @@
+version = 1
+
+[[workset]]
+id = "sample"
+name = "Sample Workset"
+desc = "Code + Browser example"
+
+commands = [
+  'code -n "$HOME/ws/demo"',
+  'omarchy-launch-browser --new-window "https://example.com"'
+]
+
+[workset.layout]
+type = "split"
+direction = "horizontal"
+ratio = 1.2
+
+[workset.layout.left]
+type = "leaf"
+slot_id = 1
+command = 'code -n "$HOME/ws/demo"'
+
+[workset.layout.right]
+type = "leaf"
+slot_id = 2
+command = 'omarchy-launch-browser --new-window "https://example.com"'
