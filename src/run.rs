@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, bail};
+use fs2::FileExt;
 use hyprland::{
     data::{Client, Clients, Monitor, WorkspaceBasic},
     dispatch::{Dispatch, DispatchType, WindowIdentifier, WorkspaceIdentifierWithSpecial},
@@ -8,7 +9,7 @@ use std::{
     collections::{HashMap, HashSet},
     env, fs,
     io::{self, Write},
-    path::Path,
+    path::{Path, PathBuf},
     thread,
     time::{Duration, Instant},
 };
@@ -184,6 +185,38 @@ fn workspace_override(ws: &Workset) -> Option<WorkspaceTarget> {
         .map(WorkspaceTarget::from_raw)
 }
 
+fn launch_lock_path() -> PathBuf {
+    if let Some(runtime) = env::var_os("XDG_RUNTIME_DIR").filter(|v| !v.is_empty()) {
+        return PathBuf::from(runtime).join("hyprsets.run.lock");
+    }
+    env::temp_dir().join("hyprsets.run.lock")
+}
+
+fn acquire_launch_lock(verbose: bool) -> Result<fs::File> {
+    let path = launch_lock_path();
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create launch lock dir: {}", parent.display()))?;
+    }
+
+    let file = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .read(true)
+        .open(&path)
+        .with_context(|| format!("failed to open launch lock: {}", path.display()))?;
+
+    if verbose {
+        println!(" acquiring launch lock at {}...", path.display());
+    }
+    file.lock_exclusive()
+        .with_context(|| format!("failed to acquire launch lock at {}", path.display()))?;
+    if verbose {
+        println!(" launch lock acquired");
+    }
+    Ok(file)
+}
+
 fn build_exec_command<'a>(
     base_cmd: &str,
     cwd: Option<&Path>,
@@ -266,17 +299,13 @@ fn resolve_active_workspace(verbose: bool) -> Result<(WorkspaceContext, Clients)
     Ok((ctx, clients))
 }
 
-fn ensure_target_workspace(ws: &Workset, verbose: bool) -> Result<()> {
-    let Some(target) = workspace_override(ws) else {
-        return Ok(());
-    };
-
+fn ensure_target_active(target: &WorkspaceTarget, verbose: bool) -> Result<WorkspaceContext> {
     let (current_ctx, _) = resolve_active_workspace(false)?;
     if target.matches(&current_ctx) {
         if verbose {
             println!(" workspace override already active: {}", target.label());
         }
-        return Ok(());
+        return Ok(current_ctx);
     }
 
     if verbose {
@@ -285,8 +314,31 @@ fn ensure_target_workspace(ws: &Workset, verbose: bool) -> Result<()> {
     Dispatch::call(DispatchType::Workspace(target.identifier()))
         .with_context(|| format!("failed to switch to {}", target.label()))?;
 
-    wait_for_target_workspace(&target, verbose)?;
+    wait_for_target_workspace(target, verbose)
+}
+
+fn ensure_workspace_focus(target: Option<&WorkspaceTarget>, verbose: bool) -> Result<()> {
+    if let Some(target) = target {
+        let (current_ctx, _) = resolve_active_workspace(false)?;
+        if target.matches(&current_ctx) {
+            return Ok(());
+        }
+        ensure_target_active(target, verbose)?;
+    }
     Ok(())
+}
+
+fn resolve_launch_workspace(
+    ws: &Workset,
+    verbose: bool,
+) -> Result<(Option<WorkspaceTarget>, WorkspaceContext)> {
+    if let Some(target) = workspace_override(ws) {
+        let ctx = ensure_target_active(&target, verbose)?;
+        return Ok((Some(target), ctx));
+    }
+
+    let (ctx, _) = resolve_active_workspace(verbose)?;
+    Ok((None, ctx))
 }
 
 fn wait_for_target_workspace(target: &WorkspaceTarget, verbose: bool) -> Result<WorkspaceContext> {
@@ -312,10 +364,11 @@ fn wait_for_target_workspace(target: &WorkspaceTarget, verbose: bool) -> Result<
 }
 
 pub fn run_workset(ws: &Workset, verbose: bool, preconfirm_clean: bool) -> Result<()> {
-    ensure_target_workspace(ws, verbose)?;
+    let _launch_lock = acquire_launch_lock(verbose)?;
+    let (workspace_target, workspace_ctx) = resolve_launch_workspace(ws, verbose)?;
 
-    match clean_active_workspace(verbose, preconfirm_clean)
-        .context("failed to clean active workspace before launch")?
+    match clean_workspace(&workspace_ctx, verbose, preconfirm_clean)
+        .context("failed to clean target workspace before launch")?
     {
         WorkspaceCleanAction::Proceed => {}
         WorkspaceCleanAction::Cancelled => {
@@ -326,11 +379,17 @@ pub fn run_workset(ws: &Workset, verbose: bool, preconfirm_clean: bool) -> Resul
 
     if let Some(layout) = &ws.layout {
         println!("launching workset '{}' with layout...", ws.name);
-        run_layout(layout, ws, verbose)
-            .with_context(|| format!("failed to launch layout (id: {})", ws.id))?;
+        run_layout(
+            layout,
+            ws,
+            verbose,
+            &workspace_ctx,
+            workspace_target.as_ref(),
+        )
+        .with_context(|| format!("failed to launch layout (id: {})", ws.id))?;
     } else {
         println!("launching workset '{}' (commands sequential)...", ws.name);
-        run_commands(ws, verbose)
+        run_commands(ws, verbose, workspace_target.as_ref())
             .with_context(|| format!("failed to run commands (id: {})", ws.id))?;
     }
     Ok(())
@@ -355,8 +414,12 @@ pub fn workspace_cleanup_status(target: Option<&Workset>) -> Result<WorkspaceCle
     })
 }
 
-fn clean_active_workspace(verbose: bool, preconfirm: bool) -> Result<WorkspaceCleanAction> {
-    let state = collect_active_workspace_state(verbose)?;
+fn clean_workspace(
+    target_context: &WorkspaceContext,
+    verbose: bool,
+    preconfirm: bool,
+) -> Result<WorkspaceCleanAction> {
+    let state = collect_workspace_state(target_context.clone(), verbose)?;
     let label = state.context.label();
 
     if state.candidates.is_empty() {
@@ -413,6 +476,14 @@ fn clean_active_workspace(verbose: bool, preconfirm: bool) -> Result<WorkspaceCl
     Ok(WorkspaceCleanAction::Proceed)
 }
 
+fn collect_workspace_state(
+    context: WorkspaceContext,
+    verbose: bool,
+) -> Result<ActiveWorkspaceState> {
+    let clients = Clients::get().context("failed to list Hyprland clients")?;
+    collect_workspace_state_with_clients(context, clients, verbose)
+}
+
 fn collect_active_workspace_state(verbose: bool) -> Result<ActiveWorkspaceState> {
     let (context, clients) =
         resolve_active_workspace(verbose).context("failed to resolve active workspace context")?;
@@ -456,7 +527,11 @@ fn collect_workspace_state_with_clients(
     })
 }
 
-fn run_commands(ws: &Workset, verbose: bool) -> Result<()> {
+fn run_commands(
+    ws: &Workset,
+    verbose: bool,
+    workspace_target: Option<&WorkspaceTarget>,
+) -> Result<()> {
     let cmds = &ws.commands;
     if cmds.is_empty() {
         println!("no commands to run");
@@ -464,6 +539,7 @@ fn run_commands(ws: &Workset, verbose: bool) -> Result<()> {
     }
 
     for (idx, cmd) in cmds.iter().enumerate() {
+        ensure_workspace_focus(workspace_target, verbose)?;
         if verbose {
             println!(" exec[{idx}]: {cmd}");
         } else {
@@ -480,12 +556,17 @@ fn run_commands(ws: &Workset, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-fn run_layout(node: &LayoutNode, ws: &Workset, verbose: bool) -> Result<()> {
-    let (workspace_ctx, current_clients) = resolve_active_workspace(verbose)
-        .context("failed to determine active workspace for layout")?;
+fn run_layout(
+    node: &LayoutNode,
+    ws: &Workset,
+    verbose: bool,
+    workspace: &WorkspaceContext,
+    workspace_target: Option<&WorkspaceTarget>,
+) -> Result<()> {
+    let current_clients = Clients::get().context("failed to list Hyprland clients")?;
     let base_clients = current_clients
         .iter()
-        .filter(|c| workspace_ctx.matches(&c.workspace))
+        .filter(|c| workspace.matches(&c.workspace))
         .count();
     let total_slots = count_slots(node);
     let mut launched = 0usize;
@@ -497,10 +578,11 @@ fn run_layout(node: &LayoutNode, ws: &Workset, verbose: bool) -> Result<()> {
         verbose,
         &mut launched,
         total_slots,
-        &workspace_ctx,
+        workspace,
         base_clients,
         &mut split_state,
         &mut pending_ratio,
+        workspace_target,
     )
 }
 
@@ -539,9 +621,11 @@ fn run_layout_inner(
     base_clients: usize,
     current_split: &mut SplitDirection,
     pending_ratio: &mut Option<f32>,
+    workspace_target: Option<&WorkspaceTarget>,
 ) -> Result<()> {
     match node {
         LayoutNode::Leaf(slot) => {
+            ensure_workspace_focus(workspace_target, verbose)?;
             let had_window = *launched > 0;
             println!(" slot #{} exec: {}", slot.slot_id, slot.command);
             let cwd = slot.cwd.as_deref().or(ws.cwd.as_deref());
@@ -590,6 +674,7 @@ fn run_layout_inner(
                 base_clients,
                 current_split,
                 pending_ratio,
+                workspace_target,
             )?;
             ensure_split_direction(split.direction, current_split, verbose)?;
             let mut right_pending = Some(hypr_ratio);
@@ -603,6 +688,7 @@ fn run_layout_inner(
                 base_clients,
                 current_split,
                 &mut right_pending,
+                workspace_target,
             )?;
 
             let target_clients = base_clients + *launched;
