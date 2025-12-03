@@ -704,13 +704,26 @@ impl HomeApp {
             return;
         }
         let len = self.cfg.worksets.len() as isize;
-        let current = self.table_state.selected().map(|i| i as isize).unwrap_or(0);
-        let mut next = current + delta;
-        if next < 0 {
-            next = 0;
-        } else if next >= len {
-            next = len - 1;
-        }
+        let current = self
+            .table_state
+            .selected()
+            .map(|i| i as isize)
+            .unwrap_or(0);
+
+        let next = if delta == 1 && current == len - 1 {
+            0
+        } else if delta == -1 && current == 0 {
+            len - 1
+        } else {
+            let mut next = current + delta;
+            if next < 0 {
+                next = 0;
+            } else if next >= len {
+                next = len - 1;
+            }
+            next
+        };
+
         self.select_index(next as usize, visible_rows);
     }
 
