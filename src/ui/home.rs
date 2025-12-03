@@ -264,10 +264,18 @@ impl HomeApp {
             .skip(start)
             .take(visible_rows)
             .map(|(idx, ws)| {
+                let workspace = ws
+                    .workspace
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|w| !w.is_empty())
+                    .unwrap_or("")
+                    .to_string();
                 Row::new(vec![
                     Cell::from(format!("{:>3}", idx + 1)),
                     Cell::from(ws.name.clone()),
                     Cell::from(ws.desc.clone()),
+                    Cell::from(workspace),
                 ])
             })
             .collect();
@@ -278,7 +286,7 @@ impl HomeApp {
             .map(|i| format!("{}/{}", i + 1, total))
             .unwrap_or_else(|| format!("0/{}", total));
 
-        let header = Row::new(vec!["No", "Name", "Description"]).style(
+        let header = Row::new(vec!["No", "Name", "Description", "Workspace"]).style(
             Style::default()
                 .fg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
@@ -286,8 +294,9 @@ impl HomeApp {
 
         let widths = [
             Constraint::Length(5),
-            Constraint::Length(22),
+            Constraint::Length(20),
             Constraint::Min(10),
+            Constraint::Length(18),
         ];
 
         let table = Table::new(rows, widths)
