@@ -58,6 +58,34 @@ Launch behavior:
 - On launch it asks whether to close existing windows on the active workspace (skipped if none are present).
 - `HYPRSETS_INITIAL_SPLIT` can force the first split orientation when running layouts (`horizontal` or `vertical`; default `horizontal`).
 
+### Autostart on Hyprland login
+You can launch specific worksets automatically when Hyprland starts. Create worksets that target the workspaces you want, then call `hyprsets run <id>` from Hyprland's `exec-once` hooks.
+
+Example worksets with explicit workspace targets:
+```toml
+[[workset]]
+id = "ws-1"
+name = "Project Atlas"
+workspace = "1"
+commands = [
+  'kitty --title "API Logs" sh -c "cd ~/projects/atlas && tail -f logs/dev.log"',
+  'brave --new-window https://status.example.com'
+]
+
+[[workset]]
+id = "ws-scratch"
+name = "Scratchpad Notes"
+workspace = "special:scratchpad"
+commands = [ 'kitty --title "Notes" nvim ~/notes/quick.md' ]
+```
+
+Then add the launch commands to your Hyprland config (`$HOME` でユーザーごとのホームを参照できます):
+```
+exec-once = $HOME/.local/bin/hyprsets run ws-1
+exec-once = $HOME/.local/bin/hyprsets run ws-scratch
+```
+This will start HyprSets as part of your session startup and place each workset on its defined workspace (including special workspaces) without opening the TUI.
+
 ### TUI shortcuts
 Home:
 - `Enter` run, `e` edit, `n` new, `c` duplicate, `d` delete (with confirm), `Shift+J/K` reorder, `q`/`Esc` quit.
