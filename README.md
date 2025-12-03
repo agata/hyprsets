@@ -6,6 +6,7 @@ HyprSets is a TUI launcher for Hyprland worksets. Define a set of commands (and 
 - TUI home screen to run, duplicate, reorder, or delete worksets with mouse or keyboard.
 - Layout editor that lets you split slots horizontally/vertically, tweak ratios, and edit slot commands in place.
 - Launches worksets either sequentially or by walking the layout tree, waiting for windows to appear as it goes.
+- Per-workset workspace targeting, including special workspaces (scratchpads), or stick to the current workspace by default.
 - Prompts to close existing windows on the active workspace before launching to keep layouts clean.
 - Config stored in TOML under `~/.config/hyprsets/hyprsets.toml` (created automatically with a sample).
 
@@ -53,6 +54,7 @@ Commands:
 Launch behavior:
 - If a layout is present, HyprSets traverses it, launching each slot and applying split ratios as windows appear.
 - Without a layout, commands are executed sequentially with a short delay.
+- `workspace` (optional per workset) forces launch on a specific workspace name/ID or `special[:name]`; empty/missing uses the currently active workspace.
 - On launch it asks whether to close existing windows on the active workspace (skipped if none are present).
 - `HYPRSETS_INITIAL_SPLIT` can force the first split orientation when running layouts (`horizontal` or `vertical`; default `horizontal`).
 
@@ -79,6 +81,7 @@ version = 1
 id = "sample"
 name = "Sample Workset"
 desc = "Code + Browser example"
+workspace = ""   # optional; empty means use the active workspace
 
 # Used when no layout is defined (optional if you rely solely on the layout tree)
 commands = [
@@ -104,6 +107,7 @@ command = 'omarchy-launch-browser --new-window "https://example.com"'
 ```
 
 Notes:
+- `workspace` accepts a workspace name or numeric id. Use `special` or `special:<name>` to target scratchpad workspaces. Leaving it empty (or omitting it) keeps the "use current workspace" behavior.
 - `cwd` and `env` can be set per workset or per slot; slot values override workset defaults.
 - `ratio` is converted to Hyprland's `splitratio exact` and kept within a safe range.
 - Slot `command` strings are executed via `hyprctl dispatch exec`, so shell features should be quoted accordingly.

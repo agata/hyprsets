@@ -66,6 +66,7 @@ struct ActiveDrag {
 enum DialogField {
     Id,
     Name,
+    Workspace,
     Desc,
 }
 
@@ -103,10 +104,12 @@ enum ToolbarAction {
 struct WorksetForm {
     id: String,
     name: String,
+    workspace: String,
     desc: String,
     focus: DialogField,
     cursor_id: usize,
     cursor_name: usize,
+    cursor_workspace: usize,
     cursor_desc: usize,
 }
 
@@ -534,11 +537,17 @@ impl EditorApp {
 
         let id_line = self.field_line("ID", &form.id, form.focus == DialogField::Id);
         let name_line = self.field_line("Name", &form.name, form.focus == DialogField::Name);
+        let workspace_line = self.field_line(
+            "Workspace",
+            &form.workspace,
+            form.focus == DialogField::Workspace,
+        );
         let desc_line = self.field_line("Desc", &form.desc, form.focus == DialogField::Desc);
 
         let lines = vec![
             Line::from(id_line),
             Line::from(name_line),
+            Line::from(workspace_line),
             Line::from(desc_line),
             Line::from(""),
             Line::from("Enter: Save  Tab/Shift+Tab: Switch field  Esc: Cancel"),
@@ -558,10 +567,15 @@ impl EditorApp {
                 let w = width_up_to(&form.name, form.cursor_name);
                 (inner.x + prefix_w + w, inner.y + 1)
             }
+            DialogField::Workspace => {
+                let prefix_w = UnicodeWidthStr::width("Workspace: ") as u16;
+                let w = width_up_to(&form.workspace, form.cursor_workspace);
+                (inner.x + prefix_w + w, inner.y + 2)
+            }
             DialogField::Desc => {
                 let prefix_w = UnicodeWidthStr::width("Desc: ") as u16;
                 let w = width_up_to(&form.desc, form.cursor_desc);
-                (inner.x + prefix_w + w, inner.y + 2)
+                (inner.x + prefix_w + w, inner.y + 3)
             }
         };
         f.set_cursor(cursor_x, cursor_y);
@@ -747,6 +761,12 @@ impl EditorApp {
                 }
                 self.workset.id = new_id.to_string();
                 self.workset.name = form.name.trim().to_string();
+                let workspace = form.workspace.trim();
+                self.workset.workspace = if workspace.is_empty() {
+                    None
+                } else {
+                    Some(workspace.to_string())
+                };
                 self.workset.desc = form.desc.trim().to_string();
                 self.mark_changed();
                 self.mode = Mode::Normal;
@@ -768,6 +788,15 @@ impl EditorApp {
                         form.cursor_name = prev;
                     }
                 }
+                DialogField::Workspace => {
+                    if form.cursor_workspace > 0
+                        && let Some(prev) =
+                            prev_grapheme_start(&form.workspace, form.cursor_workspace)
+                    {
+                        form.workspace.drain(prev..form.cursor_workspace);
+                        form.cursor_workspace = prev;
+                    }
+                }
                 DialogField::Desc => {
                     if form.cursor_desc > 0
                         && let Some(prev) = prev_grapheme_start(&form.desc, form.cursor_desc)
@@ -786,6 +815,10 @@ impl EditorApp {
                     form.name.insert(form.cursor_name, ch);
                     form.cursor_name += ch.len_utf8();
                 }
+                DialogField::Workspace => {
+                    form.workspace.insert(form.cursor_workspace, ch);
+                    form.cursor_workspace += ch.len_utf8();
+                }
                 DialogField::Desc => {
                     form.desc.insert(form.cursor_desc, ch);
                     form.cursor_desc += ch.len_utf8();
@@ -800,6 +833,12 @@ impl EditorApp {
                 DialogField::Name => {
                     if let Some(prev) = prev_grapheme_start(&form.name, form.cursor_name) {
                         form.cursor_name = prev;
+                    }
+                }
+                DialogField::Workspace => {
+                    if let Some(prev) = prev_grapheme_start(&form.workspace, form.cursor_workspace)
+                    {
+                        form.cursor_workspace = prev;
                     }
                 }
                 DialogField::Desc => {
@@ -819,6 +858,11 @@ impl EditorApp {
                         form.cursor_name = next;
                     }
                 }
+                DialogField::Workspace => {
+                    if let Some(next) = next_grapheme_end(&form.workspace, form.cursor_workspace) {
+                        form.cursor_workspace = next;
+                    }
+                }
                 DialogField::Desc => {
                     if let Some(next) = next_grapheme_end(&form.desc, form.cursor_desc) {
                         form.cursor_desc = next;
@@ -828,11 +872,13 @@ impl EditorApp {
             KeyCode::Home => match form.focus {
                 DialogField::Id => form.cursor_id = 0,
                 DialogField::Name => form.cursor_name = 0,
+                DialogField::Workspace => form.cursor_workspace = 0,
                 DialogField::Desc => form.cursor_desc = 0,
             },
             KeyCode::End => match form.focus {
                 DialogField::Id => form.cursor_id = form.id.len(),
                 DialogField::Name => form.cursor_name = form.name.len(),
+                DialogField::Workspace => form.cursor_workspace = form.workspace.len(),
                 DialogField::Desc => form.cursor_desc = form.desc.len(),
             },
             _ => {}
@@ -856,6 +902,7 @@ impl EditorApp {
         match form.focus {
             DialogField::Id => form.cursor_id = form.id.len(),
             DialogField::Name => form.cursor_name = form.name.len(),
+            DialogField::Workspace => form.cursor_workspace = form.workspace.len(),
             DialogField::Desc => form.cursor_desc = form.desc.len(),
         }
     }
@@ -1100,10 +1147,17 @@ impl EditorApp {
             form: WorksetForm {
                 id: self.workset.id.clone(),
                 name: self.workset.name.clone(),
+                workspace: self.workset.workspace.clone().unwrap_or_default(),
                 desc: self.workset.desc.clone(),
                 focus: DialogField::Name,
                 cursor_id: self.workset.id.len(),
                 cursor_name: self.workset.name.len(),
+                cursor_workspace: self
+                    .workset
+                    .workspace
+                    .as_ref()
+                    .map(|s| s.len())
+                    .unwrap_or(0),
                 cursor_desc: self.workset.desc.len(),
             },
         };
@@ -1281,7 +1335,8 @@ fn render_split_highlight(f: &mut Frame, rect: Rect, _direction: SplitDirection,
 fn next_field(focus: DialogField) -> DialogField {
     match focus {
         DialogField::Id => DialogField::Name,
-        DialogField::Name => DialogField::Desc,
+        DialogField::Name => DialogField::Workspace,
+        DialogField::Workspace => DialogField::Desc,
         DialogField::Desc => DialogField::Id,
     }
 }
@@ -1290,7 +1345,8 @@ fn prev_field(focus: DialogField) -> DialogField {
     match focus {
         DialogField::Id => DialogField::Desc,
         DialogField::Name => DialogField::Id,
-        DialogField::Desc => DialogField::Name,
+        DialogField::Workspace => DialogField::Name,
+        DialogField::Desc => DialogField::Workspace,
     }
 }
 

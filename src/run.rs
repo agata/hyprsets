@@ -1,8 +1,8 @@
 use anyhow::{Context, Result, bail};
 use hyprland::{
-    data::{Clients, Monitor, WorkspaceBasic},
-    dispatch::{Dispatch, DispatchType, WindowIdentifier},
-    shared::{Address, HyprData, HyprDataActive},
+    data::{Client, Clients, Monitor, WorkspaceBasic},
+    dispatch::{Dispatch, DispatchType, WindowIdentifier, WorkspaceIdentifierWithSpecial},
+    shared::{Address, HyprData, HyprDataActive, HyprDataActiveOptional},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -18,6 +18,7 @@ use crate::config::{LayoutNode, SplitDirection, Workset};
 const SLOT_LAUNCH_DELAY: Duration = Duration::from_secs(1);
 const WINDOW_APPEAR_TIMEOUT: Duration = Duration::from_secs(8);
 const WINDOW_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const WORKSPACE_SWITCH_TIMEOUT: Duration = Duration::from_secs(5);
 const HYPR_SPLIT_MIN: f32 = 0.1;
 const HYPR_SPLIT_MAX: f32 = 1.9;
 
@@ -53,6 +54,18 @@ pub struct WorkspaceCleanupStatus {
     pub closable_windows: usize,
 }
 
+#[derive(Clone, Debug)]
+struct WorkspaceTarget {
+    kind: WorkspaceTargetKind,
+}
+
+#[derive(Clone, Debug)]
+enum WorkspaceTargetKind {
+    Id(i32),
+    Name(String),
+    Special(Option<String>),
+}
+
 impl WorkspaceContext {
     fn from_basic(workspace: WorkspaceBasic) -> Self {
         let is_special = workspace.id <= 0 || workspace.name.starts_with("special");
@@ -82,6 +95,93 @@ impl WorkspaceContext {
             )
         }
     }
+}
+
+impl WorkspaceTarget {
+    fn from_raw(raw: &str) -> Self {
+        let trimmed = raw.trim();
+        if let Some(name) = trimmed.strip_prefix("special:") {
+            return Self {
+                kind: WorkspaceTargetKind::Special(Some(name.to_string())),
+            };
+        }
+        if trimmed.eq_ignore_ascii_case("special") {
+            return Self {
+                kind: WorkspaceTargetKind::Special(None),
+            };
+        }
+        if let Some(name) = trimmed.strip_prefix("name:") {
+            return Self {
+                kind: WorkspaceTargetKind::Name(name.to_string()),
+            };
+        }
+        if let Ok(id) = trimmed.parse::<i32>() {
+            return Self {
+                kind: WorkspaceTargetKind::Id(id),
+            };
+        }
+
+        Self {
+            kind: WorkspaceTargetKind::Name(trimmed.to_string()),
+        }
+    }
+
+    fn label(&self) -> String {
+        match &self.kind {
+            WorkspaceTargetKind::Id(id) => format!("workspace {id}"),
+            WorkspaceTargetKind::Name(name) => format!("workspace '{name}'"),
+            WorkspaceTargetKind::Special(None) => "special workspace".into(),
+            WorkspaceTargetKind::Special(Some(name)) => {
+                format!("special workspace '{name}'")
+            }
+        }
+    }
+
+    fn identifier(&self) -> WorkspaceIdentifierWithSpecial<'_> {
+        match &self.kind {
+            WorkspaceTargetKind::Id(id) => WorkspaceIdentifierWithSpecial::Id(*id),
+            WorkspaceTargetKind::Name(name) => WorkspaceIdentifierWithSpecial::Name(name.as_str()),
+            WorkspaceTargetKind::Special(None) => WorkspaceIdentifierWithSpecial::Special(None),
+            WorkspaceTargetKind::Special(Some(name)) => {
+                WorkspaceIdentifierWithSpecial::Special(Some(name.as_str()))
+            }
+        }
+    }
+
+    fn context(&self) -> WorkspaceContext {
+        let basic = match &self.kind {
+            WorkspaceTargetKind::Id(id) => WorkspaceBasic {
+                id: *id,
+                name: id.to_string(),
+            },
+            WorkspaceTargetKind::Name(name) => WorkspaceBasic {
+                id: i32::MAX,
+                name: name.clone(),
+            },
+            WorkspaceTargetKind::Special(None) => WorkspaceBasic {
+                id: 0,
+                name: "special".into(),
+            },
+            WorkspaceTargetKind::Special(Some(name)) => WorkspaceBasic {
+                id: 0,
+                name: format!("special:{name}"),
+            },
+        };
+        WorkspaceContext::from_basic(basic)
+    }
+
+    fn matches(&self, ctx: &WorkspaceContext) -> bool {
+        let target_ctx = self.context();
+        ctx.matches(&target_ctx.workspace)
+    }
+}
+
+fn workspace_override(ws: &Workset) -> Option<WorkspaceTarget> {
+    ws.workspace
+        .as_deref()
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(WorkspaceTarget::from_raw)
 }
 
 fn build_exec_command<'a>(
@@ -132,20 +232,20 @@ fn shell_escape(raw: &str) -> String {
 }
 
 fn resolve_active_workspace(verbose: bool) -> Result<(WorkspaceContext, Clients)> {
-    let monitor = Monitor::get_active().context("failed to get active monitor from Hyprland")?;
     let clients = Clients::get().context("failed to list Hyprland clients")?;
-
-    if let Some(focused) = clients.iter().find(|c| c.focus_history_id == 0) {
-        let ctx = WorkspaceContext::from_basic(focused.workspace.clone());
+    let active_client = Client::get_active().context("failed to get active window")?;
+    if let Some(focused) = active_client {
+        let ctx = WorkspaceContext::from_basic(focused.workspace);
         if verbose {
             println!(
-                " active workspace determined from focused window: {}",
+                " active workspace determined from active window: {}",
                 ctx.label()
             );
         }
         return Ok((ctx, clients));
     }
 
+    let monitor = Monitor::get_active().context("failed to get active monitor from Hyprland")?;
     let special_ctx = WorkspaceContext::from_basic(monitor.special_workspace.clone());
     let special_active =
         special_ctx.workspace.id != 0 || !special_ctx.workspace.name.trim().is_empty();
@@ -166,7 +266,54 @@ fn resolve_active_workspace(verbose: bool) -> Result<(WorkspaceContext, Clients)
     Ok((ctx, clients))
 }
 
+fn ensure_target_workspace(ws: &Workset, verbose: bool) -> Result<()> {
+    let Some(target) = workspace_override(ws) else {
+        return Ok(());
+    };
+
+    let (current_ctx, _) = resolve_active_workspace(false)?;
+    if target.matches(&current_ctx) {
+        if verbose {
+            println!(" workspace override already active: {}", target.label());
+        }
+        return Ok(());
+    }
+
+    if verbose {
+        println!(" switching to {} before launch...", target.label());
+    }
+    Dispatch::call(DispatchType::Workspace(target.identifier()))
+        .with_context(|| format!("failed to switch to {}", target.label()))?;
+
+    wait_for_target_workspace(&target, verbose)?;
+    Ok(())
+}
+
+fn wait_for_target_workspace(target: &WorkspaceTarget, verbose: bool) -> Result<WorkspaceContext> {
+    let expected = target.context();
+    let deadline = Instant::now() + WORKSPACE_SWITCH_TIMEOUT;
+    loop {
+        let (ctx, _) = resolve_active_workspace(false)?;
+        if ctx.matches(&expected.workspace) {
+            if verbose {
+                println!(" active workspace is now {}", target.label());
+            }
+            return Ok(ctx);
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "timed out after {:?} waiting for {}",
+                WORKSPACE_SWITCH_TIMEOUT,
+                target.label()
+            );
+        }
+        thread::sleep(WINDOW_POLL_INTERVAL);
+    }
+}
+
 pub fn run_workset(ws: &Workset, verbose: bool, preconfirm_clean: bool) -> Result<()> {
+    ensure_target_workspace(ws, verbose)?;
+
     match clean_active_workspace(verbose, preconfirm_clean)
         .context("failed to clean active workspace before launch")?
     {
@@ -189,8 +336,19 @@ pub fn run_workset(ws: &Workset, verbose: bool, preconfirm_clean: bool) -> Resul
     Ok(())
 }
 
-pub fn workspace_cleanup_status() -> Result<WorkspaceCleanupStatus> {
-    let state = collect_active_workspace_state(false)?;
+pub fn workspace_cleanup_status(target: Option<&Workset>) -> Result<WorkspaceCleanupStatus> {
+    let state = if let Some(ws) = target {
+        if let Some(target_workspace) = workspace_override(ws) {
+            let context = target_workspace.context();
+            let clients = Clients::get().context("failed to list Hyprland clients")?;
+            collect_workspace_state_with_clients(context, clients, false)?
+        } else {
+            collect_active_workspace_state(false)?
+        }
+    } else {
+        collect_active_workspace_state(false)?
+    };
+
     Ok(WorkspaceCleanupStatus {
         workspace_name: state.context.workspace.name.clone(),
         closable_windows: state.candidates.len(),
@@ -258,6 +416,14 @@ fn clean_active_workspace(verbose: bool, preconfirm: bool) -> Result<WorkspaceCl
 fn collect_active_workspace_state(verbose: bool) -> Result<ActiveWorkspaceState> {
     let (context, clients) =
         resolve_active_workspace(verbose).context("failed to resolve active workspace context")?;
+    collect_workspace_state_with_clients(context, clients, verbose)
+}
+
+fn collect_workspace_state_with_clients(
+    context: WorkspaceContext,
+    clients: Clients,
+    verbose: bool,
+) -> Result<ActiveWorkspaceState> {
     let self_pid = std::process::id() as i32;
     let ancestors = collect_ancestor_pids()?;
 

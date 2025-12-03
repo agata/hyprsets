@@ -811,22 +811,24 @@ impl HomeApp {
         }
     }
 
-    fn current_workset_info(&self) -> Option<(String, String)> {
+    fn current_workset(&self) -> Option<Workset> {
         self.table_state
             .selected()
             .and_then(|idx| self.cfg.worksets.get(idx))
-            .map(|ws| (ws.id.clone(), ws.name.clone()))
+            .cloned()
     }
 
     fn begin_run_selected(&mut self) -> Result<Option<HomeExit>> {
-        let Some((id, name)) = self.current_workset_info() else {
+        let Some(ws) = self.current_workset() else {
             return Ok(None);
         };
-        self.begin_run(id, name)
+        self.begin_run(ws)
     }
 
-    fn begin_run(&mut self, id: String, name: String) -> Result<Option<HomeExit>> {
-        let status = workspace_cleanup_status()?;
+    fn begin_run(&mut self, ws: Workset) -> Result<Option<HomeExit>> {
+        let status = workspace_cleanup_status(Some(&ws))?;
+        let id = ws.id.clone();
+        let name = ws.name.clone();
         if status.closable_windows == 0 {
             return Ok(Some(HomeExit::Run {
                 id,
@@ -844,7 +846,10 @@ impl HomeApp {
     }
 
     fn current_id(&self) -> Option<String> {
-        self.current_workset_info().map(|(id, _)| id)
+        self.table_state
+            .selected()
+            .and_then(|idx| self.cfg.worksets.get(idx))
+            .map(|ws| ws.id.clone())
     }
 
     fn delete_at(&mut self, idx: usize) -> Result<()> {
@@ -930,6 +935,7 @@ impl HomeApp {
             id: id.to_string(),
             name: name.to_string(),
             desc: desc.to_string(),
+            workspace: None,
             commands: vec![],
             cwd: None,
             env: HashMap::new(),

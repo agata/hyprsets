@@ -18,6 +18,8 @@ pub struct Workset {
     pub id: String,
     pub name: String,
     pub desc: String,
+    #[serde(default)]
+    pub workspace: Option<String>,
     pub commands: Vec<String>,
     #[serde(default)]
     pub cwd: Option<PathBuf>,
@@ -120,6 +122,7 @@ impl AppConfig {
             id: "sample".into(),
             name: "Sample Workset".into(),
             desc: "Code + Browser example".into(),
+            workspace: Some(String::new()),
             commands: vec![
                 String::from(r#"code -n "$HOME/ws/demo""#),
                 String::from(r#"omarchy-launch-browser --new-window "https://example.com""#),
