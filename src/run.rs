@@ -44,6 +44,7 @@ struct WorkspaceContext {
 struct ActiveWorkspaceState {
     context: WorkspaceContext,
     candidates: Vec<CloseCandidate>,
+    initial_clients: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -226,6 +227,7 @@ fn clean_active_workspace(verbose: bool, preconfirm: bool) -> Result<WorkspaceCl
         }
     }
 
+    let expected_remaining = state.initial_clients.saturating_sub(state.candidates.len());
     let mut closed = 0usize;
     for c in state.candidates {
         if verbose {
@@ -245,6 +247,10 @@ fn clean_active_workspace(verbose: bool, preconfirm: bool) -> Result<WorkspaceCl
         .with_context(|| format!("failed to close window {}", c.address))?;
         closed += 1;
     }
+    if closed > 0 {
+        wait_for_clients_at_most(&state.context, expected_remaining, verbose)
+            .with_context(|| format!("failed to wait for windows to close on {}", label))?;
+    }
     println!("closed {closed} window(s) on {} before launch", label);
     Ok(WorkspaceCleanAction::Proceed)
 }
@@ -256,6 +262,10 @@ fn collect_active_workspace_state(verbose: bool) -> Result<ActiveWorkspaceState>
     let ancestors = collect_ancestor_pids()?;
 
     let mut candidates = Vec::new();
+    let matching_clients = clients
+        .iter()
+        .filter(|c| context.matches(&c.workspace))
+        .count();
     for c in clients
         .iter()
         .filter(|c| context.matches(&c.workspace) && c.pid != self_pid)
@@ -276,6 +286,7 @@ fn collect_active_workspace_state(verbose: bool) -> Result<ActiveWorkspaceState>
     Ok(ActiveWorkspaceState {
         context,
         candidates,
+        initial_clients: matching_clients,
     })
 }
 
@@ -525,6 +536,42 @@ fn wait_for_clients_on_workspace(
 
         if verbose && first_log {
             println!(" waiting for windows... {}: {}/{}", label, count, target);
+            first_log = false;
+        }
+        thread::sleep(WINDOW_POLL_INTERVAL);
+    }
+}
+
+fn wait_for_clients_at_most(workspace: &WorkspaceContext, max: usize, verbose: bool) -> Result<()> {
+    let deadline = Instant::now() + WINDOW_APPEAR_TIMEOUT;
+    let mut first_log = true;
+    let label = workspace.label();
+    loop {
+        let clients = Clients::get().context("failed to list Hyprland clients")?;
+        let count = clients
+            .iter()
+            .filter(|c| workspace.matches(&c.workspace))
+            .count();
+        if count <= max {
+            if verbose {
+                println!(" {}: clients drained ({}/{})", label, count, max);
+            }
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            bail!(
+                "{}: timed out after {:?} waiting for clients to close ({}/{})",
+                label,
+                WINDOW_APPEAR_TIMEOUT,
+                count,
+                max
+            );
+        }
+        if verbose && first_log {
+            println!(
+                " waiting for windows to close... {}: {}/{}",
+                label, count, max
+            );
             first_log = false;
         }
         thread::sleep(WINDOW_POLL_INTERVAL);
