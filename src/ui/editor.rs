@@ -1014,10 +1014,10 @@ impl EditorApp {
     }
 
     fn bump_ratio(&mut self, delta: f32) {
-        if let Some((_, old, new)) = adjust_ratio(&mut self.root, &self.selected_path, delta) {
-            if (old - new).abs() > 0.0001 {
-                self.mark_changed();
-            }
+        if let Some((_, old, new)) = adjust_ratio(&mut self.root, &self.selected_path, delta)
+            && (old - new).abs() > 0.0001
+        {
+            self.mark_changed();
         }
     }
 
