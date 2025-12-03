@@ -37,6 +37,9 @@ jobs:
       - name: Build package
         run: ./scripts/package.sh --skip-checks
 
+      - name: Generate release notes from changelog
+        run: python3 scripts/extract_changelog_section.py "${{ github.ref_name }}" dist/RELEASE_BODY.md
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -51,6 +54,7 @@ jobs:
           files: |
             dist/hyprsets-*.tar.gz
             dist/hyprsets-*.tar.gz.sha256
-          generate_release_notes: true
+          body_path: dist/RELEASE_BODY.md
+          generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
