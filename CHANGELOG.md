@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2025-12-03
+### Added
+- Configurable workspace targets per workset (including `special` scratchpads), plus a workspace column on the home list to show destinations.
+- Launch lock and workspace focus handling so only one run proceeds at a time and the target workspace stays active while commands/layouts spawn.
+- Added `hyprsets version` subcommand.
+- UI improvements: workset ID editing, wrap-around navigation, and remembering the last selection after edits.
+- Release automation pulls GitHub release descriptions from `CHANGELOG.md`.
+
+### Changed
+- Workset changes now auto-save during actions; exit-time bulk saves were removed.
+- Reduced UI noise by removing ratio tweak toasts and waiting for workspace cleanup to settle before launching.
+
+### Fixed
+- Launching to scratchpad workspaces now works reliably, and cleanup targets the intended workspace.
+- Cursor visibility in the new-workset dialog and launch lock file handling were corrected.
+
 ## [0.1.0] - 2025-12-03
 ### Added
 - Initial release of HyprSets with a TUI home screen to run, duplicate, reorder, or delete worksets with keyboard and mouse.
