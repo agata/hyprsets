@@ -201,6 +201,7 @@ fn acquire_launch_lock(verbose: bool) -> Result<fs::File> {
 
     let file = fs::OpenOptions::new()
         .create(true)
+        .truncate(false)
         .write(true)
         .read(true)
         .open(&path)
