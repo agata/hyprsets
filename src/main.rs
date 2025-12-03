@@ -40,6 +40,8 @@ enum Command {
     Run { id: String },
     /// Open editor for a workset id
     Edit { id: String },
+    /// Show the hyprsets version and exit
+    Version,
 }
 
 fn main() {
@@ -54,6 +56,12 @@ fn main() {
 
 fn try_main() -> Result<()> {
     let cli = Cli::parse();
+
+    if matches!(cli.command.as_ref(), Some(Command::Version)) {
+        print_version();
+        return Ok(());
+    }
+
     let config_path = cli.config.unwrap_or_else(default_config_path);
     let app_cfg = AppConfig::load_or_init(&config_path)
         .with_context(|| format!("failed to load config at {}", config_path.display()))?;
@@ -61,6 +69,7 @@ fn try_main() -> Result<()> {
     let result = match cli.command {
         Some(Command::Run { id }) => run_workset(&app_cfg, &id, cli.verbose > 0, false),
         Some(Command::Edit { id }) => edit_workset(config_path.as_path(), &id),
+        Some(Command::Version) => unreachable!("version is handled earlier"),
         None => run_interactive(app_cfg, config_path.as_path(), cli.verbose > 0),
     };
 
@@ -97,6 +106,10 @@ fn run_interactive(mut app_cfg: AppConfig, config_path: &Path, verbose: bool) ->
 fn run_workset(cfg: &AppConfig, id: &str, verbose: bool, preconfirm_clean: bool) -> Result<()> {
     let ws = find_workset(cfg, id)?;
     run_workset_launch(ws, verbose, preconfirm_clean)
+}
+
+fn print_version() {
+    println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
 }
 
 fn edit_workset(config_path: &Path, id: &str) -> Result<()> {

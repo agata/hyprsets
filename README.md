@@ -47,6 +47,7 @@ Commands:
 - `hyprsets` — open the TUI home screen.
 - `hyprsets run <id>` — run a workset directly (no UI).
 - `hyprsets edit <id>` — open the layout editor for a workset.
+- `hyprsets version` — print the HyprSets version.
 - `-v` — print verbose launch logs (hyprctl operations, waits).
 
 Launch behavior:
