@@ -451,6 +451,20 @@ impl HomeApp {
         f.render_widget(Clear, popup_area);
         f.render_widget(block, popup_area);
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
+
+        let (cursor_x, cursor_y) = match form.focus {
+            DialogField::Name => {
+                let prefix_w = UnicodeWidthStr::width("Name: ") as u16;
+                let text_w = UnicodeWidthStr::width(form.name.as_str()) as u16;
+                (inner.x + prefix_w + text_w, inner.y)
+            }
+            DialogField::Desc => {
+                let prefix_w = UnicodeWidthStr::width("Desc: ") as u16;
+                let text_w = UnicodeWidthStr::width(form.desc.as_str()) as u16;
+                (inner.x + prefix_w + text_w, inner.y + 1)
+            }
+        };
+        f.set_cursor(cursor_x, cursor_y);
     }
 
     fn render_run_modal(&self, f: &mut Frame, area: Rect, state: &ConfirmRunState) {
@@ -523,7 +537,7 @@ impl HomeApp {
                 }
             }
             KeyCode::Char('n') => {
-                self.mode = Mode::NewDialog(NewDialogState::default());
+                self.start_new_dialog()?;
                 return Ok(None);
             }
             KeyCode::Char('c') => {
@@ -561,6 +575,7 @@ impl HomeApp {
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
+                self.hide_cursor()?;
                 self.message = Some("Creation cancelled".into());
             }
             KeyCode::Tab => {
@@ -581,6 +596,7 @@ impl HomeApp {
                 let form_clone = form.clone();
                 self.create_new(&form_clone)?;
                 self.mode = Mode::Normal;
+                self.hide_cursor()?;
             }
             KeyCode::Char(ch) => match form.focus {
                 DialogField::Name => form.name.push(ch),
@@ -650,7 +666,7 @@ impl HomeApp {
                 }
             }
             ToolbarAction::New => {
-                self.mode = Mode::NewDialog(NewDialogState::default());
+                self.start_new_dialog()?;
             }
             ToolbarAction::Clone => {
                 self.clone_selected()?;
@@ -666,6 +682,17 @@ impl HomeApp {
         }
         self.ensure_offset(visible_rows);
         Ok(None)
+    }
+
+    fn start_new_dialog(&mut self) -> Result<()> {
+        execute!(io::stdout(), Show)?;
+        self.mode = Mode::NewDialog(NewDialogState::default());
+        Ok(())
+    }
+
+    fn hide_cursor(&self) -> Result<()> {
+        execute!(io::stdout(), Hide)?;
+        Ok(())
     }
 
     fn row_from_y(&self, y: u16, ui: &UiMeta) -> Option<usize> {
