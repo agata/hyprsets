@@ -1,6 +1,6 @@
 use anyhow::{Context, Result, bail};
 use hyprland::{
-    data::{Clients, Workspace},
+    data::{Clients, Monitor, WorkspaceBasic},
     dispatch::{Dispatch, DispatchType, WindowIdentifier},
     shared::{Address, HyprData, HyprDataActive},
 };
@@ -35,8 +35,14 @@ struct CloseCandidate {
 }
 
 #[derive(Clone, Debug)]
+struct WorkspaceContext {
+    workspace: WorkspaceBasic,
+    is_special: bool,
+}
+
+#[derive(Clone, Debug)]
 struct ActiveWorkspaceState {
-    name: String,
+    context: WorkspaceContext,
     candidates: Vec<CloseCandidate>,
 }
 
@@ -44,6 +50,37 @@ struct ActiveWorkspaceState {
 pub struct WorkspaceCleanupStatus {
     pub workspace_name: String,
     pub closable_windows: usize,
+}
+
+impl WorkspaceContext {
+    fn from_basic(workspace: WorkspaceBasic) -> Self {
+        let is_special = workspace.id <= 0 || workspace.name.starts_with("special");
+        Self {
+            workspace,
+            is_special,
+        }
+    }
+
+    fn matches(&self, other: &WorkspaceBasic) -> bool {
+        other.id == self.workspace.id
+            || (!self.workspace.name.is_empty() && other.name == self.workspace.name)
+    }
+
+    fn label(&self) -> String {
+        let prefix = if self.is_special {
+            "special workspace"
+        } else {
+            "workspace"
+        };
+        if self.workspace.name.is_empty() {
+            format!("{prefix} {}", self.workspace.id)
+        } else {
+            format!(
+                "{prefix} {} (id {})",
+                self.workspace.name, self.workspace.id
+            )
+        }
+    }
 }
 
 fn build_exec_command<'a>(
@@ -93,6 +130,41 @@ fn shell_escape(raw: &str) -> String {
     escaped
 }
 
+fn resolve_active_workspace(verbose: bool) -> Result<(WorkspaceContext, Clients)> {
+    let monitor = Monitor::get_active().context("failed to get active monitor from Hyprland")?;
+    let clients = Clients::get().context("failed to list Hyprland clients")?;
+
+    if let Some(focused) = clients.iter().find(|c| c.focus_history_id == 0) {
+        let ctx = WorkspaceContext::from_basic(focused.workspace.clone());
+        if verbose {
+            println!(
+                " active workspace determined from focused window: {}",
+                ctx.label()
+            );
+        }
+        return Ok((ctx, clients));
+    }
+
+    let special_ctx = WorkspaceContext::from_basic(monitor.special_workspace.clone());
+    let special_active =
+        special_ctx.workspace.id != 0 || !special_ctx.workspace.name.trim().is_empty();
+    if special_active {
+        if verbose {
+            println!(
+                " active special workspace on focused monitor: {}",
+                special_ctx.label()
+            );
+        }
+        return Ok((special_ctx, clients));
+    }
+
+    let ctx = WorkspaceContext::from_basic(monitor.active_workspace.clone());
+    if verbose {
+        println!(" active workspace: {}", ctx.label());
+    }
+    Ok((ctx, clients))
+}
+
 pub fn run_workset(ws: &Workset, verbose: bool, preconfirm_clean: bool) -> Result<()> {
     match clean_active_workspace(verbose, preconfirm_clean)
         .context("failed to clean active workspace before launch")?
@@ -119,28 +191,26 @@ pub fn run_workset(ws: &Workset, verbose: bool, preconfirm_clean: bool) -> Resul
 pub fn workspace_cleanup_status() -> Result<WorkspaceCleanupStatus> {
     let state = collect_active_workspace_state(false)?;
     Ok(WorkspaceCleanupStatus {
-        workspace_name: state.name,
+        workspace_name: state.context.workspace.name.clone(),
         closable_windows: state.candidates.len(),
     })
 }
 
 fn clean_active_workspace(verbose: bool, preconfirm: bool) -> Result<WorkspaceCleanAction> {
     let state = collect_active_workspace_state(verbose)?;
+    let label = state.context.label();
 
     if state.candidates.is_empty() {
         if verbose {
-            println!(
-                "closing skipped: active workspace '{}' had no windows",
-                state.name
-            );
+            println!("closing skipped: {} had no windows", label);
         }
         return Ok(WorkspaceCleanAction::Proceed);
     }
 
     if !preconfirm {
         println!(
-            "Workspace '{}' has {} window(s). Close all before launching the workset? [y/N]",
-            state.name,
+            "{} has {} window(s). Close all before launching the workset? [y/N]",
+            label,
             state.candidates.len()
         );
         print!("> ");
@@ -175,23 +245,20 @@ fn clean_active_workspace(verbose: bool, preconfirm: bool) -> Result<WorkspaceCl
         .with_context(|| format!("failed to close window {}", c.address))?;
         closed += 1;
     }
-    println!(
-        "closed {closed} window(s) on workspace '{}' before launch",
-        state.name
-    );
+    println!("closed {closed} window(s) on {} before launch", label);
     Ok(WorkspaceCleanAction::Proceed)
 }
 
 fn collect_active_workspace_state(verbose: bool) -> Result<ActiveWorkspaceState> {
-    let active = Workspace::get_active().context("failed to get active workspace from Hyprland")?;
-    let clients = Clients::get().context("failed to list Hyprland clients")?;
+    let (context, clients) =
+        resolve_active_workspace(verbose).context("failed to resolve active workspace context")?;
     let self_pid = std::process::id() as i32;
     let ancestors = collect_ancestor_pids()?;
 
     let mut candidates = Vec::new();
     for c in clients
         .iter()
-        .filter(|c| c.workspace.id == active.id && c.pid != self_pid)
+        .filter(|c| context.matches(&c.workspace) && c.pid != self_pid)
     {
         if ancestors.contains(&c.pid) {
             if verbose {
@@ -207,7 +274,7 @@ fn collect_active_workspace_state(verbose: bool) -> Result<ActiveWorkspaceState>
     }
 
     Ok(ActiveWorkspaceState {
-        name: active.name.clone(),
+        context,
         candidates,
     })
 }
@@ -237,11 +304,11 @@ fn run_commands(ws: &Workset, verbose: bool) -> Result<()> {
 }
 
 fn run_layout(node: &LayoutNode, ws: &Workset, verbose: bool) -> Result<()> {
-    let active = Workspace::get_active().context("failed to get active workspace from Hyprland")?;
-    let current_clients = Clients::get().context("failed to list Hyprland clients")?;
+    let (workspace_ctx, current_clients) = resolve_active_workspace(verbose)
+        .context("failed to determine active workspace for layout")?;
     let base_clients = current_clients
         .iter()
-        .filter(|c| c.workspace.id == active.id)
+        .filter(|c| workspace_ctx.matches(&c.workspace))
         .count();
     let total_slots = count_slots(node);
     let mut launched = 0usize;
@@ -253,7 +320,7 @@ fn run_layout(node: &LayoutNode, ws: &Workset, verbose: bool) -> Result<()> {
         verbose,
         &mut launched,
         total_slots,
-        active.id,
+        &workspace_ctx,
         base_clients,
         &mut split_state,
         &mut pending_ratio,
@@ -291,7 +358,7 @@ fn run_layout_inner(
     verbose: bool,
     launched: &mut usize,
     total_slots: usize,
-    workspace_id: i32,
+    workspace: &WorkspaceContext,
     base_clients: usize,
     current_split: &mut SplitDirection,
     pending_ratio: &mut Option<f32>,
@@ -309,7 +376,7 @@ fn run_layout_inner(
                 flip_split_state(current_split);
             }
             let target_clients = base_clients + *launched;
-            wait_for_clients_on_workspace(workspace_id, target_clients, verbose)?;
+            wait_for_clients_on_workspace(workspace, target_clients, verbose)?;
 
             if let Some(ratio) = pending_ratio.take() {
                 apply_split_ratio(ratio, verbose);
@@ -342,7 +409,7 @@ fn run_layout_inner(
                 verbose,
                 launched,
                 total_slots,
-                workspace_id,
+                workspace,
                 base_clients,
                 current_split,
                 pending_ratio,
@@ -355,14 +422,14 @@ fn run_layout_inner(
                 verbose,
                 launched,
                 total_slots,
-                workspace_id,
+                workspace,
                 base_clients,
                 current_split,
                 &mut right_pending,
             )?;
 
             let target_clients = base_clients + *launched;
-            wait_for_clients_on_workspace(workspace_id, target_clients, verbose)?;
+            wait_for_clients_on_workspace(workspace, target_clients, verbose)?;
         }
     }
     Ok(())
@@ -424,30 +491,32 @@ fn count_slots(node: &LayoutNode) -> usize {
     }
 }
 
-fn wait_for_clients_on_workspace(workspace_id: i32, target: usize, verbose: bool) -> Result<()> {
+fn wait_for_clients_on_workspace(
+    workspace: &WorkspaceContext,
+    target: usize,
+    verbose: bool,
+) -> Result<()> {
     let deadline = Instant::now() + WINDOW_APPEAR_TIMEOUT;
     let mut first_log = true;
+    let label = workspace.label();
     loop {
         let clients = Clients::get().context("failed to list Hyprland clients")?;
         let count = clients
             .iter()
-            .filter(|c| c.workspace.id == workspace_id)
+            .filter(|c| workspace.matches(&c.workspace))
             .count();
 
         if count >= target {
             if verbose {
-                println!(
-                    " workspace {}: clients ready ({}/{})",
-                    workspace_id, count, target
-                );
+                println!(" {}: clients ready ({}/{})", label, count, target);
             }
             return Ok(());
         }
 
         if Instant::now() >= deadline {
             bail!(
-                "workspace {}: timed out after {:?} waiting for clients ({}/{})",
-                workspace_id,
+                "{}: timed out after {:?} waiting for clients ({}/{})",
+                label,
                 WINDOW_APPEAR_TIMEOUT,
                 count,
                 target
@@ -455,10 +524,7 @@ fn wait_for_clients_on_workspace(workspace_id: i32, target: usize, verbose: bool
         }
 
         if verbose && first_log {
-            println!(
-                " waiting for windows... workspace {}: {}/{}",
-                workspace_id, count, target
-            );
+            println!(" waiting for windows... {}: {}/{}", label, count, target);
             first_log = false;
         }
         thread::sleep(WINDOW_POLL_INTERVAL);
