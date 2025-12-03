@@ -950,17 +950,9 @@ impl EditorApp {
             return;
         };
 
-        if let Some((dir, old, new)) = set_ratio(&mut self.root, &active.path, new_ratio)
+        if let Some((_, old, new)) = set_ratio(&mut self.root, &active.path, new_ratio)
             && (old - new).abs() > 0.0001
         {
-            let dir_str = match dir {
-                SplitDirection::Horizontal => "horizontal",
-                SplitDirection::Vertical => "vertical",
-            };
-            self.message = Some(format!(
-                "Drag adjusted ratio: {dir_str} {:.2} -> {:.2}",
-                old, new
-            ));
             self.mark_changed();
         }
 
@@ -1022,16 +1014,10 @@ impl EditorApp {
     }
 
     fn bump_ratio(&mut self, delta: f32) {
-        if let Some((dir, old, new)) = adjust_ratio(&mut self.root, &self.selected_path, delta) {
-            let dir_str = match dir {
-                SplitDirection::Horizontal => "horizontal",
-                SplitDirection::Vertical => "vertical",
-            };
-            self.message = Some(format!(
-                "Adjusted ratio: {dir_str} {:.2} -> {:.2}",
-                old, new
-            ));
-            self.mark_changed();
+        if let Some((_, old, new)) = adjust_ratio(&mut self.root, &self.selected_path, delta) {
+            if (old - new).abs() > 0.0001 {
+                self.mark_changed();
+            }
         }
     }
 
