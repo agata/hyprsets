@@ -58,10 +58,6 @@ pub fn run_home(
         Show
     )?;
 
-    if app.dirty {
-        app.save()?;
-    }
-
     result
 }
 
@@ -73,7 +69,6 @@ struct HomeApp {
     mode: Mode,
     message: Option<String>,
     last_click: Option<LastClick>,
-    dirty: bool,
     hover_toolbar: Option<ToolbarAction>,
 }
 
@@ -159,7 +154,6 @@ impl HomeApp {
             mode: Mode::Normal,
             message: None,
             last_click: None,
-            dirty: false,
             hover_toolbar: None,
         }
     }
@@ -571,8 +565,8 @@ impl HomeApp {
             KeyCode::Down => self.move_selection(1, ui.visible_rows),
             KeyCode::Char('k') => self.move_selection(-1, ui.visible_rows),
             KeyCode::Char('j') => self.move_selection(1, ui.visible_rows),
-            KeyCode::Char('K') => self.move_workset(-1, ui.visible_rows),
-            KeyCode::Char('J') => self.move_workset(1, ui.visible_rows),
+            KeyCode::Char('K') => self.move_workset(-1, ui.visible_rows)?,
+            KeyCode::Char('J') => self.move_workset(1, ui.visible_rows)?,
             KeyCode::PageUp => self.move_selection(-(ui.visible_rows as isize), ui.visible_rows),
             KeyCode::PageDown => self.move_selection(ui.visible_rows as isize, ui.visible_rows),
             KeyCode::Home => self.select_index(0, ui.visible_rows),
@@ -703,8 +697,8 @@ impl HomeApp {
             ToolbarAction::Clone => {
                 self.clone_selected()?;
             }
-            ToolbarAction::MoveUp => self.move_workset(-1, visible_rows),
-            ToolbarAction::MoveDown => self.move_workset(1, visible_rows),
+            ToolbarAction::MoveUp => self.move_workset(-1, visible_rows)?,
+            ToolbarAction::MoveDown => self.move_workset(1, visible_rows)?,
             ToolbarAction::Delete => {
                 if let Some(idx) = self.table_state.selected() {
                     self.mode = Mode::ConfirmDelete { idx };
@@ -858,7 +852,6 @@ impl HomeApp {
             return Ok(());
         }
         let removed = self.cfg.worksets.remove(idx);
-        self.dirty = true;
         self.message = Some(format!("Deleted: {}", removed.name));
 
         if self.cfg.worksets.is_empty() {
@@ -868,6 +861,7 @@ impl HomeApp {
             self.table_state.select(Some(self.cfg.worksets.len() - 1));
             self.scroll = self.scroll.saturating_sub(1);
         }
+        self.save()?;
         Ok(())
     }
 
@@ -883,34 +877,35 @@ impl HomeApp {
         new_ws.id = new_id.clone();
         new_ws.name = format!("{} (copy)", ws.name);
         self.cfg.worksets.push(new_ws);
-        self.dirty = true;
         self.message = Some(format!("Duplicated: {}", new_id));
         let last = self.cfg.worksets.len() - 1;
         self.table_state.select(Some(last));
+        self.save()?;
         Ok(())
     }
 
-    fn move_workset(&mut self, delta: isize, visible_rows: usize) {
+    fn move_workset(&mut self, delta: isize, visible_rows: usize) -> Result<()> {
         let Some(sel) = self.table_state.selected() else {
-            return;
+            return Ok(());
         };
         let len = self.cfg.worksets.len();
         if len <= 1 {
-            return;
+            return Ok(());
         }
 
         let target = sel as isize + delta;
         if target < 0 || target >= len as isize {
             self.message = Some("Cannot move further".into());
-            return;
+            return Ok(());
         }
 
         self.cfg.worksets.swap(sel, target as usize);
         self.table_state.select(Some(target as usize));
-        self.dirty = true;
         self.ensure_offset(visible_rows);
         let direction = if delta < 0 { "up" } else { "down" };
         self.message = Some(format!("Moved {}", direction));
+        self.save()?;
+        Ok(())
     }
 
     fn create_new(&mut self, form: &NewDialogState) -> Result<bool> {
@@ -941,10 +936,10 @@ impl HomeApp {
             layout: None,
         };
         self.cfg.worksets.push(ws);
-        self.dirty = true;
         self.message = Some(format!("Added: {}", id));
         let last = self.cfg.worksets.len() - 1;
         self.table_state.select(Some(last));
+        self.save()?;
         Ok(true)
     }
 

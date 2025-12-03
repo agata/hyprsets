@@ -664,7 +664,7 @@ impl EditorApp {
     }
 
     fn exit_saved(&mut self) -> Result<Option<EditorExit>> {
-        self.save_current()?;
+        // 保存は各アクションのオートセーブで行うため、ここでは追加保存しない
         Ok(Some(EditorExit::Saved(self.workset.clone())))
     }
 

@@ -100,18 +100,16 @@ fn run_workset(cfg: &AppConfig, id: &str, verbose: bool, preconfirm_clean: bool)
 }
 
 fn edit_workset(config_path: &Path, id: &str) -> Result<()> {
-    let mut cfg = AppConfig::load_or_init(config_path)?;
-    let idx = cfg
+    let cfg = AppConfig::load_or_init(config_path)?;
+    let ws = cfg
         .worksets
         .iter()
-        .position(|w| w.id == id)
+        .find(|w| w.id == id)
+        .cloned()
         .ok_or_else(|| anyhow!("workset not found: {id}"))?;
-    let ws = cfg.worksets[idx].clone();
 
     let EditorExit::Saved(updated) = run_editor(ws, config_path)?;
-    cfg.worksets[idx] = updated;
-    cfg.save(config_path)?;
-    println!("saved workset '{}'", id);
+    println!("finished editing workset '{}'", updated.id);
     Ok(())
 }
 
