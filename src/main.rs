@@ -73,8 +73,10 @@ fn try_main() -> Result<()> {
 }
 
 fn run_interactive(mut app_cfg: AppConfig, config_path: &Path, verbose: bool) -> Result<()> {
+    let mut last_selected_id: Option<String> = None;
     loop {
-        match run_home(app_cfg.clone(), config_path)? {
+        let initial_selection = last_selected_id.take();
+        match run_home(app_cfg.clone(), config_path, initial_selection)? {
             HomeExit::Quit => return Ok(()),
             HomeExit::Run {
                 id,
@@ -84,6 +86,7 @@ fn run_interactive(mut app_cfg: AppConfig, config_path: &Path, verbose: bool) ->
                 return run_workset(&cfg, &id, verbose, preconfirm_clean);
             }
             HomeExit::Edit(id) => {
+                last_selected_id = Some(id.clone());
                 edit_workset(config_path, &id)?;
                 app_cfg = AppConfig::load_or_init(config_path)?;
             }

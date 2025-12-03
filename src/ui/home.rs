@@ -38,8 +38,12 @@ pub enum HomeExit {
     Edit(String),
 }
 
-pub fn run_home(cfg: AppConfig, config_path: &Path) -> Result<HomeExit> {
-    let mut app = HomeApp::new(cfg, config_path.to_path_buf());
+pub fn run_home(
+    cfg: AppConfig,
+    config_path: &Path,
+    initial_selected_id: Option<String>,
+) -> Result<HomeExit> {
+    let mut app = HomeApp::new(cfg, config_path.to_path_buf(), initial_selected_id);
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
 
@@ -137,10 +141,13 @@ struct ButtonHit {
 }
 
 impl HomeApp {
-    fn new(cfg: AppConfig, config_path: PathBuf) -> Self {
+    fn new(cfg: AppConfig, config_path: PathBuf, initial_selected_id: Option<String>) -> Self {
         let mut table_state = TableState::default();
-        if !cfg.worksets.is_empty() {
-            table_state.select(Some(0));
+        if let Some(idx) = initial_selected_id
+            .and_then(|id| cfg.worksets.iter().position(|w| w.id == id))
+            .or_else(|| (!cfg.worksets.is_empty()).then_some(0))
+        {
+            table_state.select(Some(idx));
         }
         Self {
             cfg,
@@ -704,11 +711,7 @@ impl HomeApp {
             return;
         }
         let len = self.cfg.worksets.len() as isize;
-        let current = self
-            .table_state
-            .selected()
-            .map(|i| i as isize)
-            .unwrap_or(0);
+        let current = self.table_state.selected().map(|i| i as isize).unwrap_or(0);
 
         let next = if delta == 1 && current == len - 1 {
             0
