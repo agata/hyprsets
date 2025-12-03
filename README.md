@@ -2,6 +2,10 @@
 
 HyprSets is a TUI launcher for Hyprland worksets. Define a set of commands (and an optional tiled layout) once and launch them together. The app ships with a list view to pick or create worksets, plus a layout editor that mirrors Hyprland-style splits with mouse support.
 
+## Demo
+
+![HyprSets screencast](demo.gif)
+
 ## Features
 - TUI home screen to run, duplicate, reorder, or delete worksets with mouse or keyboard.
 - Layout editor that lets you split slots horizontally/vertically, tweak ratios, and edit slot commands in place.
