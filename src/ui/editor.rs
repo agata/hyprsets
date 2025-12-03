@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use crossterm::{
     cursor::Show,
     event::{
@@ -64,6 +64,7 @@ struct ActiveDrag {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DialogField {
+    Id,
     Name,
     Desc,
 }
@@ -100,9 +101,11 @@ enum ToolbarAction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct WorksetForm {
+    id: String,
     name: String,
     desc: String,
     focus: DialogField,
+    cursor_id: usize,
     cursor_name: usize,
     cursor_desc: usize,
 }
@@ -143,6 +146,7 @@ pub fn run_editor(workset: Workset, config_path: &Path) -> Result<EditorExit> {
 
 struct EditorApp {
     workset: Workset,
+    saved_id: String,
     root: LayoutNode,
     selected_path: Vec<Side>,
     message: Option<String>,
@@ -159,8 +163,10 @@ impl EditorApp {
     fn new(workset: Workset, config_path: PathBuf) -> Self {
         let root = ensure_layout(workset.clone());
         let selected_path = first_leaf_path(&root).unwrap_or_default();
+        let saved_id = workset.id.clone();
         Self {
             workset,
+            saved_id,
             root,
             selected_path,
             message: None,
@@ -526,10 +532,12 @@ impl EditorApp {
             .style(Style::default().bg(Color::Black));
         let inner = block.inner(popup);
 
+        let id_line = self.field_line("ID", &form.id, form.focus == DialogField::Id);
         let name_line = self.field_line("Name", &form.name, form.focus == DialogField::Name);
         let desc_line = self.field_line("Desc", &form.desc, form.focus == DialogField::Desc);
 
         let lines = vec![
+            Line::from(id_line),
             Line::from(name_line),
             Line::from(desc_line),
             Line::from(""),
@@ -540,15 +548,20 @@ impl EditorApp {
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
 
         let (cursor_x, cursor_y) = match form.focus {
+            DialogField::Id => {
+                let prefix_w = UnicodeWidthStr::width("ID: ") as u16;
+                let w = width_up_to(&form.id, form.cursor_id);
+                (inner.x + prefix_w + w, inner.y)
+            }
             DialogField::Name => {
                 let prefix_w = UnicodeWidthStr::width("Name: ") as u16;
                 let w = width_up_to(&form.name, form.cursor_name);
-                (inner.x + prefix_w + w, inner.y)
+                (inner.x + prefix_w + w, inner.y + 1)
             }
             DialogField::Desc => {
                 let prefix_w = UnicodeWidthStr::width("Desc: ") as u16;
                 let w = width_up_to(&form.desc, form.cursor_desc);
-                (inner.x + prefix_w + w, inner.y + 1)
+                (inner.x + prefix_w + w, inner.y + 2)
             }
         };
         f.set_cursor(cursor_x, cursor_y);
@@ -723,12 +736,30 @@ impl EditorApp {
                 self.sync_workset_cursor(form);
             }
             KeyCode::Enter => {
+                let new_id = form.id.trim();
+                if new_id.is_empty() {
+                    self.message = Some("ID cannot be empty".into());
+                    return Ok(None);
+                }
+                if let Err(err) = self.validate_workset_id(new_id) {
+                    self.message = Some(err.to_string());
+                    return Ok(None);
+                }
+                self.workset.id = new_id.to_string();
                 self.workset.name = form.name.trim().to_string();
                 self.workset.desc = form.desc.trim().to_string();
                 self.mark_changed();
                 self.mode = Mode::Normal;
             }
             KeyCode::Backspace => match form.focus {
+                DialogField::Id => {
+                    if form.cursor_id > 0
+                        && let Some(prev) = prev_grapheme_start(&form.id, form.cursor_id)
+                    {
+                        form.id.drain(prev..form.cursor_id);
+                        form.cursor_id = prev;
+                    }
+                }
                 DialogField::Name => {
                     if form.cursor_name > 0
                         && let Some(prev) = prev_grapheme_start(&form.name, form.cursor_name)
@@ -747,6 +778,10 @@ impl EditorApp {
                 }
             },
             KeyCode::Char(ch) => match form.focus {
+                DialogField::Id => {
+                    form.id.insert(form.cursor_id, ch);
+                    form.cursor_id += ch.len_utf8();
+                }
                 DialogField::Name => {
                     form.name.insert(form.cursor_name, ch);
                     form.cursor_name += ch.len_utf8();
@@ -757,6 +792,11 @@ impl EditorApp {
                 }
             },
             KeyCode::Left => match form.focus {
+                DialogField::Id => {
+                    if let Some(prev) = prev_grapheme_start(&form.id, form.cursor_id) {
+                        form.cursor_id = prev;
+                    }
+                }
                 DialogField::Name => {
                     if let Some(prev) = prev_grapheme_start(&form.name, form.cursor_name) {
                         form.cursor_name = prev;
@@ -769,6 +809,11 @@ impl EditorApp {
                 }
             },
             KeyCode::Right => match form.focus {
+                DialogField::Id => {
+                    if let Some(next) = next_grapheme_end(&form.id, form.cursor_id) {
+                        form.cursor_id = next;
+                    }
+                }
                 DialogField::Name => {
                     if let Some(next) = next_grapheme_end(&form.name, form.cursor_name) {
                         form.cursor_name = next;
@@ -781,10 +826,12 @@ impl EditorApp {
                 }
             },
             KeyCode::Home => match form.focus {
+                DialogField::Id => form.cursor_id = 0,
                 DialogField::Name => form.cursor_name = 0,
                 DialogField::Desc => form.cursor_desc = 0,
             },
             KeyCode::End => match form.focus {
+                DialogField::Id => form.cursor_id = form.id.len(),
                 DialogField::Name => form.cursor_name = form.name.len(),
                 DialogField::Desc => form.cursor_desc = form.desc.len(),
             },
@@ -793,8 +840,21 @@ impl EditorApp {
         Ok(None)
     }
 
+    fn validate_workset_id(&self, candidate: &str) -> Result<()> {
+        let cfg = AppConfig::load_or_init(&self.config_path)?;
+        if cfg
+            .worksets
+            .iter()
+            .any(|ws| ws.id == candidate && ws.id != self.saved_id)
+        {
+            bail!("ID already exists");
+        }
+        Ok(())
+    }
+
     fn sync_workset_cursor(&self, form: &mut WorksetForm) {
         match form.focus {
+            DialogField::Id => form.cursor_id = form.id.len(),
             DialogField::Name => form.cursor_name = form.name.len(),
             DialogField::Desc => form.cursor_desc = form.desc.len(),
         }
@@ -1052,9 +1112,11 @@ impl EditorApp {
     fn start_edit_workset(&mut self) {
         self.mode = Mode::EditWorkset {
             form: WorksetForm {
+                id: self.workset.id.clone(),
                 name: self.workset.name.clone(),
                 desc: self.workset.desc.clone(),
                 focus: DialogField::Name,
+                cursor_id: self.workset.id.len(),
                 cursor_name: self.workset.name.len(),
                 cursor_desc: self.workset.desc.len(),
             },
@@ -1105,7 +1167,9 @@ impl EditorApp {
 
     fn save_current(&mut self) -> Result<()> {
         self.commit_workset();
-        persist_workset(&self.workset, &self.config_path)
+        persist_workset(&self.workset, &self.saved_id, &self.config_path)?;
+        self.saved_id = self.workset.id.clone();
+        Ok(())
     }
 
     fn autosave(&mut self) {
@@ -1230,14 +1294,16 @@ fn render_split_highlight(f: &mut Frame, rect: Rect, _direction: SplitDirection,
 
 fn next_field(focus: DialogField) -> DialogField {
     match focus {
+        DialogField::Id => DialogField::Name,
         DialogField::Name => DialogField::Desc,
-        DialogField::Desc => DialogField::Name,
+        DialogField::Desc => DialogField::Id,
     }
 }
 
 fn prev_field(focus: DialogField) -> DialogField {
     match focus {
-        DialogField::Name => DialogField::Desc,
+        DialogField::Id => DialogField::Desc,
+        DialogField::Name => DialogField::Id,
         DialogField::Desc => DialogField::Name,
     }
 }
@@ -1559,12 +1625,24 @@ fn clamp_ratio(val: f32) -> f32 {
     val.clamp(RATIO_MIN, RATIO_MAX)
 }
 
-fn persist_workset(ws: &Workset, config_path: &Path) -> Result<()> {
+fn persist_workset(ws: &Workset, saved_id: &str, config_path: &Path) -> Result<()> {
     let mut cfg = AppConfig::load_or_init(config_path)?;
-    if let Some(idx) = cfg.worksets.iter().position(|w| w.id == ws.id) {
+
+    if cfg
+        .worksets
+        .iter()
+        .any(|existing| existing.id == ws.id && existing.id != saved_id)
+    {
+        bail!("ID already exists");
+    }
+
+    if let Some(idx) = cfg.worksets.iter().position(|w| w.id == saved_id) {
+        cfg.worksets[idx] = ws.clone();
+    } else if let Some(idx) = cfg.worksets.iter().position(|w| w.id == ws.id) {
         cfg.worksets[idx] = ws.clone();
     } else {
         cfg.worksets.push(ws.clone());
     }
+
     cfg.save(config_path)
 }

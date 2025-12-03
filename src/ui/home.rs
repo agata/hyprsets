@@ -87,6 +87,7 @@ enum Mode {
 
 #[derive(Debug, Clone)]
 struct NewDialogState {
+    id: String,
     name: String,
     desc: String,
     focus: DialogField,
@@ -96,6 +97,7 @@ struct NewDialogState {
 enum DialogField {
     Name,
     Desc,
+    Id,
 }
 
 #[derive(Debug, Clone)]
@@ -413,6 +415,17 @@ impl HomeApp {
         let popup_area = centered_rect(70, 50, area);
         let inner = block.inner(popup_area);
 
+        let id_label = if form.focus == DialogField::Id {
+            Span::styled(
+                format!("ID: {}", form.id),
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw(format!("ID: {}", form.id))
+        };
+
         let name_label = if form.focus == DialogField::Name {
             Span::styled(
                 format!("Name: {}", form.name),
@@ -437,11 +450,12 @@ impl HomeApp {
 
         let help = Line::from(vec![
             Span::raw("Enter: Create and return to list  "),
-            Span::raw("Tab: Switch field  "),
+            Span::raw("Tab/Shift+Tab: Switch field  "),
             Span::raw("Esc: Cancel"),
         ]);
 
         let lines = vec![
+            Line::from(id_label),
             Line::from(name_label),
             Line::from(desc_label),
             Line::from(""),
@@ -453,15 +467,20 @@ impl HomeApp {
         f.render_widget(Paragraph::new(Text::from(lines)), inner);
 
         let (cursor_x, cursor_y) = match form.focus {
+            DialogField::Id => {
+                let prefix_w = UnicodeWidthStr::width("ID: ") as u16;
+                let text_w = UnicodeWidthStr::width(form.id.as_str()) as u16;
+                (inner.x + prefix_w + text_w, inner.y)
+            }
             DialogField::Name => {
                 let prefix_w = UnicodeWidthStr::width("Name: ") as u16;
                 let text_w = UnicodeWidthStr::width(form.name.as_str()) as u16;
-                (inner.x + prefix_w + text_w, inner.y)
+                (inner.x + prefix_w + text_w, inner.y + 1)
             }
             DialogField::Desc => {
                 let prefix_w = UnicodeWidthStr::width("Desc: ") as u16;
                 let text_w = UnicodeWidthStr::width(form.desc.as_str()) as u16;
-                (inner.x + prefix_w + text_w, inner.y + 1)
+                (inner.x + prefix_w + text_w, inner.y + 2)
             }
         };
         f.set_cursor(cursor_x, cursor_y);
@@ -581,10 +600,21 @@ impl HomeApp {
             KeyCode::Tab => {
                 form.focus = match form.focus {
                     DialogField::Name => DialogField::Desc,
+                    DialogField::Desc => DialogField::Id,
+                    DialogField::Id => DialogField::Name,
+                };
+            }
+            KeyCode::BackTab => {
+                form.focus = match form.focus {
+                    DialogField::Name => DialogField::Id,
                     DialogField::Desc => DialogField::Name,
+                    DialogField::Id => DialogField::Desc,
                 };
             }
             KeyCode::Backspace => match form.focus {
+                DialogField::Id => {
+                    form.id.pop();
+                }
                 DialogField::Name => {
                     form.name.pop();
                 }
@@ -594,11 +624,13 @@ impl HomeApp {
             },
             KeyCode::Enter => {
                 let form_clone = form.clone();
-                self.create_new(&form_clone)?;
-                self.mode = Mode::Normal;
-                self.hide_cursor()?;
+                if self.create_new(&form_clone)? {
+                    self.mode = Mode::Normal;
+                    self.hide_cursor()?;
+                }
             }
             KeyCode::Char(ch) => match form.focus {
+                DialogField::Id => form.id.push(ch),
                 DialogField::Name => form.name.push(ch),
                 DialogField::Desc => form.desc.push(ch),
             },
@@ -686,8 +718,18 @@ impl HomeApp {
 
     fn start_new_dialog(&mut self) -> Result<()> {
         execute!(io::stdout(), Show)?;
-        self.mode = Mode::NewDialog(NewDialogState::default());
+        let state = self.new_dialog_state();
+        self.mode = Mode::NewDialog(state);
         Ok(())
+    }
+
+    fn new_dialog_state(&self) -> NewDialogState {
+        NewDialogState {
+            id: self.generate_id(),
+            name: String::new(),
+            desc: String::new(),
+            focus: DialogField::Name,
+        }
     }
 
     fn hide_cursor(&self) -> Result<()> {
@@ -871,16 +913,28 @@ impl HomeApp {
         self.message = Some(format!("Moved {}", direction));
     }
 
-    fn create_new(&mut self, form: &NewDialogState) -> Result<()> {
-        if form.name.trim().is_empty() {
-            self.message = Some("Please enter a name".into());
-            return Ok(());
+    fn create_new(&mut self, form: &NewDialogState) -> Result<bool> {
+        let id = form.id.trim();
+        let name = form.name.trim();
+        let desc = form.desc.trim();
+
+        if id.is_empty() {
+            self.message = Some("Please enter an id".into());
+            return Ok(false);
         }
-        let id = self.generate_id();
+        if self.cfg.worksets.iter().any(|existing| existing.id == id) {
+            self.message = Some("ID already exists".into());
+            return Ok(false);
+        }
+        if name.is_empty() {
+            self.message = Some("Please enter a name".into());
+            return Ok(false);
+        }
+
         let ws = Workset {
-            id: id.clone(),
-            name: form.name.trim().to_string(),
-            desc: form.desc.trim().to_string(),
+            id: id.to_string(),
+            name: name.to_string(),
+            desc: desc.to_string(),
             commands: vec![],
             cwd: None,
             env: HashMap::new(),
@@ -891,7 +945,7 @@ impl HomeApp {
         self.message = Some(format!("Added: {}", id));
         let last = self.cfg.worksets.len() - 1;
         self.table_state.select(Some(last));
-        Ok(())
+        Ok(true)
     }
 
     fn generate_id(&self) -> String {
@@ -912,6 +966,7 @@ impl HomeApp {
 impl Default for NewDialogState {
     fn default() -> Self {
         Self {
+            id: String::new(),
             name: String::new(),
             desc: String::new(),
             focus: DialogField::Name,
