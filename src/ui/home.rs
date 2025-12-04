@@ -908,10 +908,10 @@ impl HomeApp {
     }
 
     fn reset_numeric_input_if_stale(&mut self) {
-        if let Some(input) = self.numeric_input.as_ref() {
-            if input.last_input.elapsed() > Duration::from_millis(NUMERIC_INPUT_TIMEOUT_MS) {
-                self.numeric_input = None;
-            }
+        if let Some(input) = self.numeric_input.as_ref()
+            && input.last_input.elapsed() > Duration::from_millis(NUMERIC_INPUT_TIMEOUT_MS)
+        {
+            self.numeric_input = None;
         }
     }
 

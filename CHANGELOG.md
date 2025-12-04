@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.2.1] - 2025-12-04
 ### Changed
 - Workset list now supports multi-digit numeric selection (including `0` for the 10th entry); Enter launches the currently selected workset.
 
