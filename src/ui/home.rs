@@ -70,6 +70,7 @@ struct HomeApp {
     message: Option<String>,
     last_click: Option<LastClick>,
     hover_toolbar: Option<ToolbarAction>,
+    numeric_input: Option<NumericInput>,
 }
 
 #[derive(Debug, Clone)]
@@ -137,6 +138,14 @@ struct ButtonHit {
     action: ToolbarAction,
 }
 
+#[derive(Debug, Clone)]
+struct NumericInput {
+    buffer: String,
+    last_input: Instant,
+}
+
+const NUMERIC_INPUT_TIMEOUT_MS: u64 = 900;
+
 impl HomeApp {
     fn new(cfg: AppConfig, config_path: PathBuf, initial_selected_id: Option<String>) -> Self {
         let mut table_state = TableState::default();
@@ -155,6 +164,7 @@ impl HomeApp {
             message: None,
             last_click: None,
             hover_toolbar: None,
+            numeric_input: None,
         }
     }
 
@@ -548,6 +558,8 @@ impl HomeApp {
     }
 
     fn handle_key_normal(&mut self, key: KeyEvent, ui: &UiMeta) -> Result<Option<HomeExit>> {
+        self.reset_numeric_input_if_stale();
+
         match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(Some(HomeExit::Quit)),
             KeyCode::Enter => {
@@ -557,6 +569,9 @@ impl HomeApp {
                 if let Some(id) = self.current_id() {
                     return Ok(Some(HomeExit::Edit(id)));
                 }
+            }
+            KeyCode::Char(ch @ '0'..='9') => {
+                self.handle_numeric_selection(ch, ui.visible_rows);
             }
             KeyCode::Char('n') => {
                 self.start_new_dialog()?;
@@ -859,6 +874,45 @@ impl HomeApp {
             .selected()
             .and_then(|idx| self.cfg.worksets.get(idx))
             .map(|ws| ws.id.clone())
+    }
+
+    fn handle_numeric_selection(&mut self, ch: char, visible_rows: usize) {
+        let timeout = Duration::from_millis(NUMERIC_INPUT_TIMEOUT_MS);
+        let input = self.numeric_input.get_or_insert_with(|| NumericInput {
+            buffer: String::new(),
+            last_input: Instant::now(),
+        });
+
+        if input.last_input.elapsed() > timeout {
+            input.buffer.clear();
+        }
+
+        input.buffer.push(ch);
+        input.last_input = Instant::now();
+
+        let value = if input.buffer == "0" {
+            10
+        } else {
+            match input.buffer.parse::<usize>() {
+                Ok(num) if num > 0 => num,
+                _ => return,
+            }
+        };
+
+        let idx = value - 1;
+        if idx < self.cfg.worksets.len() {
+            self.select_index(idx, visible_rows);
+        } else {
+            self.message = Some(format!("Workset {} not available", value));
+        }
+    }
+
+    fn reset_numeric_input_if_stale(&mut self) {
+        if let Some(input) = self.numeric_input.as_ref() {
+            if input.last_input.elapsed() > Duration::from_millis(NUMERIC_INPUT_TIMEOUT_MS) {
+                self.numeric_input = None;
+            }
+        }
     }
 
     fn delete_at(&mut self, idx: usize) -> Result<()> {
