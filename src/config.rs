@@ -1,16 +1,42 @@
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
 };
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
+    #[serde(default = "default_version")]
     pub version: u32,
+    #[serde(default)]
+    pub default_tab: Option<String>,
+    #[serde(default)]
+    pub show_all_tab: Option<bool>, // deprecated; ignored
+    #[serde(default)]
+    pub all_tab_position: Option<AllTabPosition>, // deprecated; ignored
+    #[serde(rename = "tab", default)]
+    pub tabs: Vec<TabConfig>,
     #[serde(rename = "workset")]
     pub worksets: Vec<Workset>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabConfig {
+    pub id: String,
+    pub label: String,
+    #[serde(default)]
+    pub worksets: Vec<String>,
+    #[serde(default)]
+    pub include_unassigned: bool,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum AllTabPosition {
+    First,
+    Last,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -71,6 +97,8 @@ impl AppConfig {
             }
             let cfg: Self = toml::from_str(&raw)
                 .with_context(|| format!("failed to parse config file: {}", path.display()))?;
+            cfg.validate_tabs()?;
+            cfg.warn_tab_version();
             return Ok(cfg);
         }
 
@@ -136,9 +164,49 @@ impl AppConfig {
 
         Self {
             version: 1,
+            default_tab: None,
+            show_all_tab: None,
+            all_tab_position: None,
+            tabs: Vec::new(),
             worksets: vec![workset],
         }
     }
+}
+
+impl AppConfig {
+    fn validate_tabs(&self) -> Result<()> {
+        let mut ids = HashSet::new();
+        for tab in &self.tabs {
+            if tab.id.trim().is_empty() {
+                bail!("tab id must not be empty");
+            }
+            if tab.label.trim().is_empty() {
+                bail!("tab label must not be empty (id: {})", tab.id);
+            }
+            if !ids.insert(tab.id.clone()) {
+                bail!("duplicate tab id found: {}", tab.id);
+            }
+        }
+        Ok(())
+    }
+
+    fn warn_tab_version(&self) {
+        if self.version <= 1 && !self.tabs.is_empty() {
+            eprintln!("warning: config version <=1 with [[tab]] entries; enabling tab feature");
+        }
+        if matches!(self.show_all_tab, Some(false)) {
+            eprintln!("warning: show_all_tab is deprecated and ignored (All tab is always shown)");
+        }
+        if self.all_tab_position.is_some() {
+            eprintln!(
+                "warning: all_tab_position is deprecated and ignored (All tab is always last)"
+            );
+        }
+    }
+}
+
+fn default_version() -> u32 {
+    1
 }
 
 pub fn default_config_path() -> PathBuf {

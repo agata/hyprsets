@@ -1,5 +1,6 @@
 mod config;
 mod run;
+mod state;
 mod ui;
 
 use anyhow::{Context, Result, anyhow};

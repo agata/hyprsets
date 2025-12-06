@@ -8,6 +8,7 @@ HyprSets is a TUI launcher for Hyprland worksets. Define a set of commands (and 
 
 ## Features
 - TUI home screen to run, duplicate, reorder, or delete worksets with mouse or keyboard.
+- Tabbed workset list so you can group worksets, reorder tabs, and remember the last active tab.
 - Layout editor that lets you split slots horizontally/vertically, tweak ratios, and edit slot commands in place.
 - Launches worksets either sequentially or by walking the layout tree, waiting for windows to appear as it goes.
 - Per-workset workspace targeting, including special workspaces (scratchpads), or stick to the current workspace by default.
@@ -92,7 +93,7 @@ This will start HyprSets as part of your session startup and place each workset 
 
 ### TUI shortcuts
 Home:
-- `Enter` run, `e` edit, `n` new, `c` duplicate, `d` delete (with confirm), `Shift+J/K` reorder, `q`/`Esc` quit.
+- `Enter` run, `e` edit, `n` new, `c` duplicate, `d` delete (with confirm), `Shift+J/K` reorder, `a` assign tab, `t` tab menu, `q`/`Esc` quit.
 - Arrow keys or `j`/`k` to move; mouse click/scroll supported; toolbar buttons are clickable.
 
 Editor:
@@ -103,6 +104,15 @@ Editor:
 - Workset info: `e` or `F2` to edit name/description.
 - Delete slot: `x` or `d` (confirmation shown); `w` swaps the selected slot with the next one.
 - `q`/`Esc` saves and returns.
+
+### Tabs
+- Enable tabs with `version = 2` (written automatically after adding a tab). Tabs are saved in `[[tab]]` entries; an implicit `All` tab is always available.
+- Each workset belongs to at most one tab. Tab membership can be changed from the home screen (shortcut `a`) or inside the workset editor.
+- Tab layout and selection:
+  - Tab order follows the config file; you can move tabs left/right via the tab menu (`t`).
+  - The last selected tab is persisted to `~/.config/hyprsets/state.toml`.
+  - `include_unassigned = true` pulls in worksets that aren’t listed in any tab (ID-sorted).
+- New worksets created from a user tab default to that tab; you can switch tab assignment in the creation dialog.
 
 ## Configuration
 HyprSets writes a starter config automatically. A minimal example:

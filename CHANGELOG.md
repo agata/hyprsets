@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- Tabbed workset management: single-tab membership, tab menu (reorder/rename/delete), assign dialog (`a`), tab-aware new/edit dialogs (default to current tab), and cleanup of stale tab references when worksets are removed.
 
 ## [0.2.1] - 2025-12-04
 ### Changed

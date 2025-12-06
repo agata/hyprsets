@@ -68,6 +68,7 @@ enum DialogField {
     Name,
     Workspace,
     Desc,
+    Tab,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +107,7 @@ struct WorksetForm {
     name: String,
     workspace: String,
     desc: String,
+    selected_tab: Option<String>,
     focus: DialogField,
     cursor_id: usize,
     cursor_name: usize,
@@ -123,6 +125,12 @@ struct UiMeta {
     leaf_hits: Vec<LeafHit>,
     toolbar_hits: Vec<ButtonHit>,
     split_hits: Vec<SplitHit>,
+}
+
+#[derive(Debug, Clone)]
+struct TabOption {
+    id: String,
+    label: String,
 }
 
 pub fn run_editor(workset: Workset, config_path: &Path) -> Result<EditorExit> {
@@ -160,6 +168,8 @@ struct EditorApp {
     hover_toolbar: Option<ToolbarAction>,
     active_drag: Option<ActiveDrag>,
     hover_split: Option<Vec<Side>>,
+    tab_options: Vec<TabOption>,
+    selected_tab_id: Option<String>,
 }
 
 impl EditorApp {
@@ -167,6 +177,7 @@ impl EditorApp {
         let root = ensure_layout(workset.clone());
         let selected_path = first_leaf_path(&root).unwrap_or_default();
         let saved_id = workset.id.clone();
+        let (tab_options, selected_tab_id) = load_tab_state(&config_path, &workset.id);
         Self {
             workset,
             saved_id,
@@ -180,6 +191,8 @@ impl EditorApp {
             hover_toolbar: None,
             active_drag: None,
             hover_split: None,
+            tab_options,
+            selected_tab_id,
         }
     }
 
@@ -537,20 +550,38 @@ impl EditorApp {
 
         let id_line = self.field_line("ID", &form.id, form.focus == DialogField::Id);
         let name_line = self.field_line("Name", &form.name, form.focus == DialogField::Name);
+        let tab_label = if self.tab_options.is_empty() {
+            "(no tabs)".to_string()
+        } else {
+            form.selected_tab
+                .as_ref()
+                .and_then(|id| {
+                    self.tab_options
+                        .iter()
+                        .find(|opt| opt.id == *id)
+                        .map(|opt| opt.label.clone())
+                })
+                .unwrap_or_else(|| "<none>".to_string())
+        };
+
         let workspace_line = self.field_line(
             "Workspace",
             &form.workspace,
             form.focus == DialogField::Workspace,
         );
         let desc_line = self.field_line("Desc", &form.desc, form.focus == DialogField::Desc);
+        let tab_line = self.field_line("Tab", &tab_label, form.focus == DialogField::Tab);
 
         let lines = vec![
             Line::from(id_line),
             Line::from(name_line),
+            Line::from(tab_line),
             Line::from(workspace_line),
             Line::from(desc_line),
             Line::from(""),
-            Line::from("Enter: Save  Tab/Shift+Tab: Switch field  Esc: Cancel"),
+            Line::from(
+                "Enter: Save  Tab/Shift+Tab: Switch field  Left/Right/Space: Change tab  Esc: Cancel",
+            ),
         ];
 
         f.render_widget(block, popup);
@@ -567,15 +598,20 @@ impl EditorApp {
                 let w = width_up_to(&form.name, form.cursor_name);
                 (inner.x + prefix_w + w, inner.y + 1)
             }
+            DialogField::Tab => {
+                let prefix_w = UnicodeWidthStr::width("Tab: ") as u16;
+                let w = UnicodeWidthStr::width(tab_label.as_str()) as u16;
+                (inner.x + prefix_w + w, inner.y + 2)
+            }
             DialogField::Workspace => {
                 let prefix_w = UnicodeWidthStr::width("Workspace: ") as u16;
                 let w = width_up_to(&form.workspace, form.cursor_workspace);
-                (inner.x + prefix_w + w, inner.y + 2)
+                (inner.x + prefix_w + w, inner.y + 3)
             }
             DialogField::Desc => {
                 let prefix_w = UnicodeWidthStr::width("Desc: ") as u16;
                 let w = width_up_to(&form.desc, form.cursor_desc);
-                (inner.x + prefix_w + w, inner.y + 3)
+                (inner.x + prefix_w + w, inner.y + 4)
             }
         };
         f.set_cursor(cursor_x, cursor_y);
@@ -768,6 +804,7 @@ impl EditorApp {
                     Some(workspace.to_string())
                 };
                 self.workset.desc = form.desc.trim().to_string();
+                self.selected_tab_id = form.selected_tab.clone();
                 self.mark_changed();
                 self.mode = Mode::Normal;
             }
@@ -805,6 +842,7 @@ impl EditorApp {
                         form.cursor_desc = prev;
                     }
                 }
+                DialogField::Tab => {}
             },
             KeyCode::Char(ch) => match form.focus {
                 DialogField::Id => {
@@ -822,6 +860,12 @@ impl EditorApp {
                 DialogField::Desc => {
                     form.desc.insert(form.cursor_desc, ch);
                     form.cursor_desc += ch.len_utf8();
+                }
+                DialogField::Tab => {
+                    if matches!(ch, ' ' | 'l' | 'L' | 'h' | 'H') {
+                        let delta = if matches!(ch, 'h' | 'H') { -1 } else { 1 };
+                        self.cycle_tab_selection(form, delta);
+                    }
                 }
             },
             KeyCode::Left => match form.focus {
@@ -846,6 +890,7 @@ impl EditorApp {
                         form.cursor_desc = prev;
                     }
                 }
+                DialogField::Tab => self.cycle_tab_selection(form, -1),
             },
             KeyCode::Right => match form.focus {
                 DialogField::Id => {
@@ -868,18 +913,27 @@ impl EditorApp {
                         form.cursor_desc = next;
                     }
                 }
+                DialogField::Tab => self.cycle_tab_selection(form, 1),
             },
             KeyCode::Home => match form.focus {
                 DialogField::Id => form.cursor_id = 0,
                 DialogField::Name => form.cursor_name = 0,
                 DialogField::Workspace => form.cursor_workspace = 0,
                 DialogField::Desc => form.cursor_desc = 0,
+                DialogField::Tab => {
+                    form.selected_tab = None;
+                }
             },
             KeyCode::End => match form.focus {
                 DialogField::Id => form.cursor_id = form.id.len(),
                 DialogField::Name => form.cursor_name = form.name.len(),
                 DialogField::Workspace => form.cursor_workspace = form.workspace.len(),
                 DialogField::Desc => form.cursor_desc = form.desc.len(),
+                DialogField::Tab => {
+                    if let Some(last) = self.tab_options.last() {
+                        form.selected_tab = Some(last.id.clone());
+                    }
+                }
             },
             _ => {}
         }
@@ -904,7 +958,32 @@ impl EditorApp {
             DialogField::Name => form.cursor_name = form.name.len(),
             DialogField::Workspace => form.cursor_workspace = form.workspace.len(),
             DialogField::Desc => form.cursor_desc = form.desc.len(),
+            DialogField::Tab => {}
         }
+    }
+
+    fn cycle_tab_selection(&self, form: &mut WorksetForm, delta: isize) {
+        if self.tab_options.is_empty() {
+            form.selected_tab = None;
+            return;
+        }
+        let options_len = self.tab_options.len() + 1; // +1 for unassigned
+        let current_idx = form
+            .selected_tab
+            .as_ref()
+            .and_then(|id| self.tab_options.iter().position(|o| o.id == *id))
+            .map(|idx| idx + 1)
+            .unwrap_or(0);
+        let mut next = (current_idx as isize + delta).rem_euclid(options_len as isize);
+        if next < 0 {
+            next += options_len as isize;
+        }
+        let next = next as usize;
+        form.selected_tab = if next == 0 {
+            None
+        } else {
+            self.tab_options.get(next - 1).map(|opt| opt.id.clone())
+        };
     }
 
     fn handle_key_confirm_delete(
@@ -1149,6 +1228,7 @@ impl EditorApp {
                 name: self.workset.name.clone(),
                 workspace: self.workset.workspace.clone().unwrap_or_default(),
                 desc: self.workset.desc.clone(),
+                selected_tab: self.selected_tab_id.clone(),
                 focus: DialogField::Name,
                 cursor_id: self.workset.id.len(),
                 cursor_name: self.workset.name.len(),
@@ -1207,7 +1287,12 @@ impl EditorApp {
 
     fn save_current(&mut self) -> Result<()> {
         self.commit_workset();
-        persist_workset(&self.workset, &self.saved_id, &self.config_path)?;
+        persist_workset(
+            &self.workset,
+            &self.saved_id,
+            &self.selected_tab_id,
+            &self.config_path,
+        )?;
         self.saved_id = self.workset.id.clone();
         Ok(())
     }
@@ -1335,7 +1420,8 @@ fn render_split_highlight(f: &mut Frame, rect: Rect, _direction: SplitDirection,
 fn next_field(focus: DialogField) -> DialogField {
     match focus {
         DialogField::Id => DialogField::Name,
-        DialogField::Name => DialogField::Workspace,
+        DialogField::Name => DialogField::Tab,
+        DialogField::Tab => DialogField::Workspace,
         DialogField::Workspace => DialogField::Desc,
         DialogField::Desc => DialogField::Id,
     }
@@ -1345,7 +1431,8 @@ fn prev_field(focus: DialogField) -> DialogField {
     match focus {
         DialogField::Id => DialogField::Desc,
         DialogField::Name => DialogField::Id,
-        DialogField::Workspace => DialogField::Name,
+        DialogField::Tab => DialogField::Name,
+        DialogField::Workspace => DialogField::Tab,
         DialogField::Desc => DialogField::Workspace,
     }
 }
@@ -1667,7 +1754,35 @@ fn clamp_ratio(val: f32) -> f32 {
     val.clamp(RATIO_MIN, RATIO_MAX)
 }
 
-fn persist_workset(ws: &Workset, saved_id: &str, config_path: &Path) -> Result<()> {
+fn load_tab_state(config_path: &Path, workset_id: &str) -> (Vec<TabOption>, Option<String>) {
+    match AppConfig::load_or_init(config_path) {
+        Ok(cfg) => {
+            let mut selected = None;
+            let mut options = Vec::new();
+            for tab in cfg.tabs {
+                if selected.is_none() && tab.worksets.iter().any(|id| id == workset_id) {
+                    selected = Some(tab.id.clone());
+                }
+                options.push(TabOption {
+                    id: tab.id.clone(),
+                    label: tab.label.clone(),
+                });
+            }
+            (options, selected)
+        }
+        Err(err) => {
+            eprintln!("warning: failed to load tabs: {err}");
+            (Vec::new(), None)
+        }
+    }
+}
+
+fn persist_workset(
+    ws: &Workset,
+    saved_id: &str,
+    selected_tab: &Option<String>,
+    config_path: &Path,
+) -> Result<()> {
     let mut cfg = AppConfig::load_or_init(config_path)?;
 
     if cfg
@@ -1684,6 +1799,21 @@ fn persist_workset(ws: &Workset, saved_id: &str, config_path: &Path) -> Result<(
         cfg.worksets[idx] = ws.clone();
     } else {
         cfg.worksets.push(ws.clone());
+    }
+
+    // apply tab assignment (single tab membership)
+    for tab in cfg.tabs.iter_mut() {
+        tab.worksets.retain(|id| id != saved_id && id != &ws.id);
+    }
+    if let Some(target_tab) = selected_tab {
+        if let Some(tab) = cfg.tabs.iter_mut().find(|t| &t.id == target_tab) {
+            if cfg.version < 2 {
+                cfg.version = 2;
+            }
+            tab.worksets.push(ws.id.clone());
+        } else {
+            eprintln!("warning: selected tab '{target_tab}' not found; skipping assignment");
+        }
     }
 
     cfg.save(config_path)
