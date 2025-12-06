@@ -5,6 +5,7 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 ### Added
 - Tabbed workset management: single-tab membership, tab menu (reorder/rename/delete), assign dialog (`a`), tab-aware new/edit dialogs (default to current tab), and cleanup of stale tab references when worksets are removed.
+- Refactored UI and runtime modules (home actions/events/render/tabs + run workspace/layout/lock/util) and added unit tests for workspace targets, split ratios, and command building utilities.
 
 ## [0.2.1] - 2025-12-04
 ### Changed
