@@ -333,6 +333,46 @@ fn run_left_anchor(
     }
 }
 
+fn wait_for_clients_on_workspace(
+    workspace: &WorkspaceContext,
+    target: usize,
+    verbose: bool,
+) -> Result<()> {
+    let deadline = Instant::now() + WINDOW_APPEAR_TIMEOUT;
+    let mut first_log = true;
+    let label = workspace.label();
+    loop {
+        let clients = Clients::get().context("failed to list Hyprland clients")?;
+        let count = clients
+            .iter()
+            .filter(|c| workspace.matches(&c.workspace))
+            .count();
+
+        if count >= target {
+            if verbose {
+                println!(" {}: clients ready ({}/{})", label, count, target);
+            }
+            return Ok(());
+        }
+
+        if Instant::now() >= deadline {
+            bail!(
+                "{}: timed out after {:?} waiting for clients ({}/{})",
+                label,
+                WINDOW_APPEAR_TIMEOUT,
+                count,
+                target
+            );
+        }
+
+        if verbose && first_log {
+            println!(" waiting for windows... {}: {}/{}", label, count, target);
+            first_log = false;
+        }
+        thread::sleep(WINDOW_POLL_INTERVAL);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -374,45 +414,5 @@ mod tests {
             })),
         });
         assert_eq!(count_slots(&layout), 3);
-    }
-}
-
-fn wait_for_clients_on_workspace(
-    workspace: &WorkspaceContext,
-    target: usize,
-    verbose: bool,
-) -> Result<()> {
-    let deadline = Instant::now() + WINDOW_APPEAR_TIMEOUT;
-    let mut first_log = true;
-    let label = workspace.label();
-    loop {
-        let clients = Clients::get().context("failed to list Hyprland clients")?;
-        let count = clients
-            .iter()
-            .filter(|c| workspace.matches(&c.workspace))
-            .count();
-
-        if count >= target {
-            if verbose {
-                println!(" {}: clients ready ({}/{})", label, count, target);
-            }
-            return Ok(());
-        }
-
-        if Instant::now() >= deadline {
-            bail!(
-                "{}: timed out after {:?} waiting for clients ({}/{})",
-                label,
-                WINDOW_APPEAR_TIMEOUT,
-                count,
-                target
-            );
-        }
-
-        if verbose && first_log {
-            println!(" waiting for windows... {}: {}/{}", label, count, target);
-            first_log = false;
-        }
-        thread::sleep(WINDOW_POLL_INTERVAL);
     }
 }
