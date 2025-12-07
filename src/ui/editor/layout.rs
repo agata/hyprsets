@@ -311,3 +311,184 @@ fn collect_slot_ids(node: &LayoutNode, max_id: &mut u32) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn leaf(id: u32) -> LayoutNode {
+        LayoutNode::Leaf(WindowSlot {
+            slot_id: id,
+            command: format!("cmd{id}"),
+            cwd: None,
+            env: Default::default(),
+        })
+    }
+
+    #[test]
+    fn split_area_horizontal_respects_min_width() {
+        let area = Rect::new(0, 0, 2, 5);
+        let (left, right) = split_area(area, SplitDirection::Horizontal, 100.0);
+        assert_eq!(left.width, 1);
+        assert_eq!(right.width, 1);
+        assert_eq!(left.height, area.height);
+        assert_eq!(right.height, area.height);
+        assert_eq!(right.x, left.x + left.width);
+    }
+
+    #[test]
+    fn split_area_vertical_respects_min_height() {
+        let area = Rect::new(5, 5, 10, 3);
+        let (top, bottom) = split_area(area, SplitDirection::Vertical, 0.1);
+        assert_eq!(top.height, 1);
+        assert_eq!(bottom.height, 2);
+        assert_eq!(top.y, 5);
+        assert_eq!(bottom.y, 6);
+    }
+
+    #[test]
+    fn first_leaf_path_prefers_leftmost() {
+        let tree = LayoutNode::Split(SplitNode {
+            direction: SplitDirection::Horizontal,
+            ratio: 1.0,
+            left: Box::new(LayoutNode::Split(SplitNode {
+                direction: SplitDirection::Vertical,
+                ratio: 1.0,
+                left: Box::new(leaf(1)),
+                right: Box::new(leaf(2)),
+            })),
+            right: Box::new(leaf(3)),
+        });
+        assert_eq!(first_leaf_path(&tree), Some(vec![Side::Left, Side::Left]));
+    }
+
+    #[test]
+    fn replace_leaf_with_split_inserts_new_slot() {
+        let mut node = leaf(10);
+        let ok = replace_leaf_with_split(&mut node, &[], SplitDirection::Horizontal, 11);
+        assert!(ok);
+        match node {
+            LayoutNode::Split(split) => {
+                let left = split.left.as_ref();
+                let right = split.right.as_ref();
+                match (left, right) {
+                    (LayoutNode::Leaf(l), LayoutNode::Leaf(r)) => {
+                        assert_eq!(l.slot_id, 10);
+                        assert_eq!(r.slot_id, 11);
+                    }
+                    _ => panic!("split children should be leaves"),
+                }
+            }
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn remove_leaf_replaces_parent_with_sibling() {
+        let mut node = LayoutNode::Split(SplitNode {
+            direction: SplitDirection::Vertical,
+            ratio: 1.0,
+            left: Box::new(leaf(1)),
+            right: Box::new(leaf(2)),
+        });
+        assert!(remove_leaf(&mut node, &[Side::Right]));
+        match node {
+            LayoutNode::Leaf(slot) => assert_eq!(slot.slot_id, 1),
+            _ => panic!("expected remaining leaf"),
+        }
+    }
+
+    #[test]
+    fn set_leaf_at_path_updates_target() {
+        let mut node = LayoutNode::Split(SplitNode {
+            direction: SplitDirection::Horizontal,
+            ratio: 1.0,
+            left: Box::new(leaf(1)),
+            right: Box::new(leaf(2)),
+        });
+        let new_slot = WindowSlot {
+            slot_id: 99,
+            command: "new".into(),
+            cwd: None,
+            env: Default::default(),
+        };
+        assert!(set_leaf_at_path(
+            &mut node,
+            &[Side::Right],
+            new_slot.clone()
+        ));
+        match node {
+            LayoutNode::Split(split) => match split.right.as_ref() {
+                LayoutNode::Leaf(slot) => assert_eq!(slot.slot_id, 99),
+                _ => panic!("expected leaf"),
+            },
+            _ => panic!("expected split"),
+        }
+    }
+
+    #[test]
+    fn adjust_ratio_clamps_and_returns_old_new() {
+        let mut node = LayoutNode::Split(SplitNode {
+            direction: SplitDirection::Horizontal,
+            ratio: 1.0,
+            left: Box::new(leaf(1)),
+            right: Box::new(leaf(2)),
+        });
+        let res = adjust_ratio(&mut node, &[Side::Left], 10.0).expect("should adjust");
+        assert!(matches!(res.0, SplitDirection::Horizontal));
+        assert_eq!(res.1, 1.0);
+        assert!((res.2 - RATIO_MAX).abs() < f32::EPSILON);
+        if let LayoutNode::Split(split) = node {
+            assert!((split.ratio - RATIO_MAX).abs() < f32::EPSILON);
+            assert!(matches!(split.direction, SplitDirection::Horizontal));
+            let (left, right) = (split.left.as_ref(), split.right.as_ref());
+            match (left, right) {
+                (LayoutNode::Leaf(l), LayoutNode::Leaf(r)) => {
+                    assert_eq!(l.slot_id, 1);
+                    assert_eq!(r.slot_id, 2);
+                }
+                _ => panic!("split children should be leaves"),
+            }
+        } else {
+            panic!("expected split");
+        }
+    }
+
+    #[test]
+    fn set_ratio_clamps_value() {
+        let mut node = LayoutNode::Split(SplitNode {
+            direction: SplitDirection::Vertical,
+            ratio: 1.0,
+            left: Box::new(leaf(1)),
+            right: Box::new(leaf(2)),
+        });
+        let res = set_ratio(&mut node, &[Side::Right], 0.1).expect("should set");
+        assert!(matches!(res.0, SplitDirection::Vertical));
+        assert_eq!(res.1, 1.0);
+        if let LayoutNode::Split(split) = &node {
+            assert_eq!(split.ratio, RATIO_MIN);
+        } else {
+            panic!("expected split");
+        }
+    }
+
+    #[test]
+    fn ratio_from_position_horizontal_bounds_and_clamp() {
+        let area = Rect::new(10, 0, 10, 5);
+        // leftmost selectable point -> minimal ratio > 0
+        let r_min = ratio_from_position(area, SplitDirection::Horizontal, 10, 0).unwrap();
+        assert!(r_min >= RATIO_MIN);
+        // middle -> ~1.0
+        let r_mid = ratio_from_position(area, SplitDirection::Horizontal, 15, 0).unwrap();
+        assert!((r_mid - 1.0).abs() < 1e-3);
+        // far right -> near max
+        let r_max = ratio_from_position(area, SplitDirection::Horizontal, 19, 0).unwrap();
+        assert!(r_max <= RATIO_MAX);
+    }
+
+    #[test]
+    fn ratio_from_position_vertical_none_when_too_small() {
+        let area = Rect::new(0, 0, 5, 1);
+        assert!(ratio_from_position(area, SplitDirection::Vertical, 0, 0).is_none());
+    }
+}

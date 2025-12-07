@@ -541,3 +541,113 @@ fn width_up_to(text: &str, cursor: usize) -> u16 {
     let idx = cursor.min(text.len());
     UnicodeWidthStr::width(&text[..idx]) as u16
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::{ButtonHit, SplitHit};
+    use super::*;
+    use ratatui::layout::Rect;
+
+    #[test]
+    fn centered_rect_places_rect_in_middle() {
+        let area = Rect::new(0, 0, 100, 50);
+        let popup = centered_rect(50, 40, area);
+        assert_eq!(popup, Rect::new(25, 15, 50, 20));
+    }
+
+    #[test]
+    fn wrap_input_text_wraps_with_unicode_width() {
+        let text = "こんにちは";
+        let (lines, cursor_col, cursor_line) = wrap_input_text(text, text.len(), 4);
+        assert_eq!(lines, vec!["こん", "にち", "は"]);
+        assert_eq!((cursor_line, cursor_col), (2, 2));
+    }
+
+    #[test]
+    fn wrap_input_text_tracks_cursor_on_first_line() {
+        let text = "ab cd";
+        let (lines, cursor_col, cursor_line) = wrap_input_text(text, 2, 3);
+        assert_eq!(lines, vec!["ab ", "cd"]);
+        assert_eq!((cursor_line, cursor_col), (0, 2));
+    }
+
+    #[test]
+    fn wrap_input_text_handles_zero_width() {
+        let (lines, cursor_col, cursor_line) = wrap_input_text("abc", 1, 0);
+        assert_eq!(lines, vec![String::new()]);
+        assert_eq!((cursor_line, cursor_col), (0, 0));
+    }
+
+    #[test]
+    fn wrap_input_text_single_column_wraps_every_char() {
+        let (lines, cursor_col, cursor_line) = wrap_input_text("abcd", 4, 1);
+        assert_eq!(lines, vec!["a", "b", "c", "d"]);
+        assert_eq!((cursor_line, cursor_col), (3, 0));
+    }
+
+    #[test]
+    fn width_up_to_counts_display_width() {
+        assert_eq!(width_up_to("aあb", 4), 3);
+    }
+
+    #[test]
+    fn width_up_to_clamps_cursor_past_end() {
+        assert_eq!(width_up_to("abc", 99), 3);
+    }
+
+    #[test]
+    fn point_in_rect_respects_exclusive_edges() {
+        let rect = Rect::new(10, 5, 3, 2);
+        assert!(point_in_rect(10, 5, rect));
+        assert!(point_in_rect(12, 6, rect));
+        assert!(!point_in_rect(13, 5, rect));
+        assert!(!point_in_rect(10, 7, rect));
+    }
+
+    #[test]
+    fn hit_toolbar_uses_inclusive_bounds() {
+        let mut ui = UiMeta::default();
+        ui.toolbar_hits.push(ButtonHit {
+            x_start: 5,
+            x_end: 8,
+            y: 1,
+            action: ToolbarAction::EditCmd,
+        });
+        assert_eq!(hit_toolbar(5, 1, &ui), Some(ToolbarAction::EditCmd));
+        assert_eq!(hit_toolbar(8, 1, &ui), Some(ToolbarAction::EditCmd));
+        assert_eq!(hit_toolbar(9, 1, &ui), None);
+    }
+
+    #[test]
+    fn hit_toolbar_returns_first_match_when_overlapping() {
+        let mut ui = UiMeta::default();
+        ui.toolbar_hits.push(ButtonHit {
+            x_start: 0,
+            x_end: 5,
+            y: 0,
+            action: ToolbarAction::Next,
+        });
+        ui.toolbar_hits.push(ButtonHit {
+            x_start: 3,
+            x_end: 6,
+            y: 0,
+            action: ToolbarAction::Cancel,
+        });
+        assert_eq!(hit_toolbar(4, 0, &ui), Some(ToolbarAction::Next));
+    }
+
+    #[test]
+    fn hit_split_returns_matching_boundary() {
+        let mut ui = UiMeta::default();
+        let boundary = Rect::new(2, 3, 4, 1);
+        ui.split_hits.push(SplitHit {
+            boundary,
+            area: Rect::new(0, 0, 10, 10),
+            path: vec![],
+            direction: SplitDirection::Horizontal,
+        });
+        let hit = hit_split(3, 3, &ui).expect("expected split hit");
+        assert_eq!(hit.boundary, boundary);
+        assert!(hit_split(6, 4, &ui).is_none());
+    }
+}

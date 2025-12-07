@@ -459,3 +459,37 @@ fn next_grapheme_end(text: &str, cursor: usize) -> Option<usize> {
         .next()
         .map(|(_, ch)| cursor + ch.len_utf8())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn next_and_prev_field_cycle_through_form() {
+        assert!(matches!(
+            next_field(super::super::DialogField::Id),
+            super::super::DialogField::Name
+        ));
+        assert!(matches!(
+            prev_field(super::super::DialogField::Id),
+            super::super::DialogField::Desc
+        ));
+        assert!(matches!(
+            next_field(super::super::DialogField::Desc),
+            super::super::DialogField::Id
+        ));
+    }
+
+    #[test]
+    fn grapheme_navigation_handles_multibyte() {
+        let text = "aあい";
+        // positions: 0 a, 1 あ, 4 い
+        assert_eq!(next_grapheme_end(text, 0), Some(1));
+        assert_eq!(next_grapheme_end(text, 1), Some(4));
+        assert_eq!(next_grapheme_end(text, 4), Some(7));
+
+        assert_eq!(prev_grapheme_start(text, 4), Some(1));
+        assert_eq!(prev_grapheme_start(text, 1), Some(0));
+        assert_eq!(prev_grapheme_start(text, 0), None);
+    }
+}
