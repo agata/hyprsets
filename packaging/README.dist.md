@@ -1,28 +1,28 @@
-# HyprSets 配布物について
+# HyprSets Distribution Contents
 
-このディレクトリは `scripts/package.sh` で作る配布用 tarball に同梱されるファイル一式です。
+This directory contains the files bundled into the release tarball produced by `scripts/package.sh`.
 
-## 同梱物
-- `bin/hyprsets`: リリースビルド済みバイナリ
-- `share/applications/hyprsets.desktop`: デスクトップエントリ（デフォルトで Alacritty `--class TUI.float` に乗せて起動し、Hyprland 側で float ルールを貼りやすくしてあります）
-- `share/hyprsets/sample-worksets.toml`: サンプル設定（初回作成用）
-- `install.sh`: インストール用スクリプト
-- `CHECKSUMS.txt`: tarball 展開後のファイルチェックサム
+## Included files
+- `bin/hyprsets`: Release-built binary
+- `share/applications/hyprsets.desktop`: Desktop entry; launches via Alacritty with `--class TUI.float` so Hyprland float rules are easy to apply
+- `share/hyprsets/sample-worksets.toml`: Sample config for first-time setup
+- `install.sh`: Installer script
+- `CHECKSUMS.txt`: Checksums for files after extracting the tarball
 
-## 使い方（tarball 展開後）
+## Usage (after extracting the tarball)
 ```
-# システム全体に入れる例（root が必要）
+# System-wide install (root required)
 sudo ./install.sh
 
-# ユーザホームに入れる例
+# Install into the user home
 ./install.sh --user
 ```
 
-### オプション
-- `--user` : `~/.local/{bin,share/applications}` に配置し、サンプル設定を `~/.config/hyprsets/hyprsets.toml` に作成します。
-- `--prefix <path>` : `/usr/local` 以外へ入れたい場合のパス上書き。
-- `--no-config` : サンプル設定の展開をスキップ。
-- `--force` : 既存の設定ファイルを上書きします（通常は既存があれば残します）。
+### Options
+- `--user`: Install into `~/.local/{bin,share/applications}` and create the sample config at `~/.config/hyprsets/hyprsets.toml`.
+- `--prefix <path>`: Override the install prefix if you do not want `/usr/local`.
+- `--no-config`: Skip extracting the sample config.
+- `--force`: Overwrite existing config files (by default they are kept).
 
-### Hyprland で float 起動させる場合
-`.desktop` の Exec は `alacritty --class TUI.float -e <bin>` になっています。Hyprland の `windowrulev2 = float,class:TUI.float` のようにクラス指定で浮かせてください。Alacritty 以外を使いたい場合は `.desktop` を書き換えてください（install.sh 実行後に編集しても可）。
+### Launching as floating on Hyprland
+The `.desktop` entry runs `alacritty --class TUI.float -e <bin>`. Apply a class-based rule like `windowrulev2 = float,class:TUI.float` on the Hyprland side. If you prefer a different terminal, edit the `.desktop` file (either before packaging or after running `install.sh`).
