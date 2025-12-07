@@ -160,4 +160,4 @@ Notes:
 - `scripts/package.sh` performs the same checks unless `--skip-checks` is used.
 
 ## Status
-The project is being prepared for public release. Feedback and issues are welcome once it is published.
+The project is now publicly available. Feedback and issues are welcome anytime.
