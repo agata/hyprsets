@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+
+## [0.3.1] - 2025-12-08
 ### Changed
 - Home tab bar now uses ratatui tabs with proper padding, hover/click hitboxes (including a clickable "+ Add" action), and aligned table spacing.
 ### Fixed
