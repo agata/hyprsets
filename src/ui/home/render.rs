@@ -176,8 +176,7 @@ impl HomeApp {
     fn render_table(&mut self, f: &mut Frame, area: Rect, visible_rows: usize) {
         let total = self.current_tab_len();
         if total == 0 {
-            let block = Block::default()
-                .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM);
+            let block = Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM);
             f.render_widget(block.clone(), area);
             let inner = block.inner(area);
             let msg = Paragraph::new("No worksets in this tab. Press 'n' to create.")
@@ -245,10 +244,7 @@ impl HomeApp {
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(
-                Block::default()
-                    .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM),
-            )
+            .block(Block::default().borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM))
             .highlight_style(
                 Style::default()
                     .bg(Color::Cyan)
