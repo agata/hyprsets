@@ -19,7 +19,7 @@ use std::collections::HashSet;
 pub(crate) fn run_commands(
     ws: &Workset,
     verbose: bool,
-    workspace_target: Option<&WorkspaceTarget>,
+    workspace_target: &WorkspaceTarget,
 ) -> Result<()> {
     let cmds = &ws.commands;
     if cmds.is_empty() {
@@ -51,7 +51,7 @@ pub(crate) fn run_layout(
     ws: &Workset,
     verbose: bool,
     workspace: &WorkspaceContext,
-    workspace_target: Option<&WorkspaceTarget>,
+    workspace_target: &WorkspaceTarget,
 ) -> Result<()> {
     let current_clients = Clients::get().context("failed to list Hyprland clients")?;
     let mut known_clients: HashSet<Address> = current_clients
@@ -90,7 +90,7 @@ fn run_layout_inner(
     workspace: &WorkspaceContext,
     base_clients: usize,
     pending_ratio: &mut Option<f32>,
-    workspace_target: Option<&WorkspaceTarget>,
+    workspace_target: &WorkspaceTarget,
     known_clients: &mut HashSet<Address>,
     launched_slots: &mut HashSet<u32>,
 ) -> Result<Option<Address>> {
@@ -107,7 +107,7 @@ fn run_layout_inner(
                 .with_context(|| format!("failed to exec slot #{} command", slot.slot_id))?;
             *launched += 1;
             let target_clients = base_clients + *launched;
-            wait_for_clients_on_workspace(workspace, target_clients, verbose)?;
+            wait_for_clients_on_workspace(workspace, target_clients, verbose, workspace_target)?;
 
             if let Some(ratio) = pending_ratio.take() {
                 apply_split_ratio(ratio, verbose);
@@ -196,7 +196,7 @@ fn run_layout_inner(
             )?;
 
             let target_clients = base_clients + *launched;
-            wait_for_clients_on_workspace(workspace, target_clients, verbose)?;
+            wait_for_clients_on_workspace(workspace, target_clients, verbose, workspace_target)?;
             let remaining_left = if left_was_split {
                 if let Some(addr) = left_anchor.clone() {
                     focus_window(addr, workspace, verbose, workspace_target)?;
@@ -251,7 +251,7 @@ fn focus_window(
     addr: Address,
     workspace: &WorkspaceContext,
     verbose: bool,
-    workspace_target: Option<&WorkspaceTarget>,
+    workspace_target: &WorkspaceTarget,
 ) -> Result<()> {
     let id = WindowIdentifier::Address(addr.clone());
     if verbose {
@@ -299,7 +299,7 @@ fn run_left_anchor(
     workspace: &WorkspaceContext,
     base_clients: usize,
     pending_ratio: &mut Option<f32>,
-    workspace_target: Option<&WorkspaceTarget>,
+    workspace_target: &WorkspaceTarget,
     known_clients: &mut HashSet<Address>,
     launched_slots: &mut HashSet<u32>,
 ) -> Result<Option<Address>> {
@@ -337,11 +337,13 @@ fn wait_for_clients_on_workspace(
     workspace: &WorkspaceContext,
     target: usize,
     verbose: bool,
+    workspace_target: &WorkspaceTarget,
 ) -> Result<()> {
     let deadline = Instant::now() + WINDOW_APPEAR_TIMEOUT;
     let mut first_log = true;
     let label = workspace.label();
     loop {
+        ensure_workspace_focus(workspace_target, verbose)?;
         let clients = Clients::get().context("failed to list Hyprland clients")?;
         let count = clients
             .iter()

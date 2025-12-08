@@ -5,6 +5,8 @@ All notable changes to this project will be documented in this file.
 ## [Unreleased]
 ### Changed
 - Home tab bar now uses ratatui tabs with proper padding, hover/click hitboxes (including a clickable "+ Add" action), and aligned table spacing.
+### Fixed
+- Workset launch now keeps the target workspace focused while windows spawn, preventing apps from opening on the wrong workspace when the user switches during launch.
 
 ## [0.3.0] - 2025-12-08
 ### Added

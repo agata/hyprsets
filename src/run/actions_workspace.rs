@@ -124,6 +124,36 @@ impl WorkspaceTarget {
         }
     }
 
+    fn from_context(ctx: &WorkspaceContext) -> Self {
+        if ctx.is_special {
+            let name = ctx
+                .workspace
+                .name
+                .strip_prefix("special:")
+                .map(str::to_string)
+                .filter(|v| !v.is_empty());
+            return Self {
+                kind: WorkspaceTargetKind::Special(name),
+            };
+        }
+
+        if ctx.workspace.id > 0 && ctx.workspace.id != i32::MAX {
+            return Self {
+                kind: WorkspaceTargetKind::Id(ctx.workspace.id),
+            };
+        }
+
+        if !ctx.workspace.name.is_empty() {
+            return Self {
+                kind: WorkspaceTargetKind::Name(ctx.workspace.name.clone()),
+            };
+        }
+
+        Self {
+            kind: WorkspaceTargetKind::Id(ctx.workspace.id),
+        }
+    }
+
     fn label(&self) -> String {
         match &self.kind {
             WorkspaceTargetKind::Id(id) => format!("workspace {id}"),
@@ -235,31 +265,26 @@ fn ensure_target_active(target: &WorkspaceTarget, verbose: bool) -> Result<Works
     wait_for_target_workspace(target, verbose)
 }
 
-pub(crate) fn ensure_workspace_focus(
-    target: Option<&WorkspaceTarget>,
-    verbose: bool,
-) -> Result<()> {
-    if let Some(target) = target {
-        let (current_ctx, _) = resolve_active_workspace(false)?;
-        if target.matches(&current_ctx) {
-            return Ok(());
-        }
-        ensure_target_active(target, verbose)?;
+pub(crate) fn ensure_workspace_focus(target: &WorkspaceTarget, verbose: bool) -> Result<()> {
+    let (current_ctx, _) = resolve_active_workspace(false)?;
+    if target.matches(&current_ctx) {
+        return Ok(());
     }
-    Ok(())
+    ensure_target_active(target, verbose).map(|_| ())
 }
 
 pub(crate) fn resolve_launch_workspace(
     ws: &Workset,
     verbose: bool,
-) -> Result<(Option<WorkspaceTarget>, WorkspaceContext)> {
+) -> Result<(WorkspaceTarget, WorkspaceContext)> {
     if let Some(target) = workspace_override(ws) {
         let ctx = ensure_target_active(&target, verbose)?;
-        return Ok((Some(target), ctx));
+        return Ok((target, ctx));
     }
 
     let (ctx, _) = resolve_active_workspace(verbose)?;
-    Ok((None, ctx))
+    let target = WorkspaceTarget::from_context(&ctx);
+    Ok((target, ctx))
 }
 
 fn wait_for_target_workspace(target: &WorkspaceTarget, verbose: bool) -> Result<WorkspaceContext> {
@@ -300,17 +325,11 @@ pub fn run_workset(ws: &Workset, verbose: bool, preconfirm_clean: bool) -> Resul
 
     if let Some(layout) = &ws.layout {
         println!("launching workset '{}' with layout...", ws.name);
-        run_layout(
-            layout,
-            ws,
-            verbose,
-            &workspace_ctx,
-            workspace_target.as_ref(),
-        )
-        .with_context(|| format!("failed to launch layout (id: {})", ws.id))?;
+        run_layout(layout, ws, verbose, &workspace_ctx, &workspace_target)
+            .with_context(|| format!("failed to launch layout (id: {})", ws.id))?;
     } else {
         println!("launching workset '{}' (commands sequential)...", ws.name);
-        run_commands(ws, verbose, workspace_target.as_ref())
+        run_commands(ws, verbose, &workspace_target)
             .with_context(|| format!("failed to run commands (id: {})", ws.id))?;
     }
     Ok(())
