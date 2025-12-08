@@ -47,8 +47,15 @@ struct ResolvedTab {
 struct TabHit {
     x_start: u16,
     x_end: u16,
-    y: u16,
-    idx: usize,
+    y_start: u16,
+    y_end: u16,
+    kind: TabHitKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TabHitKind {
+    Tab(usize),
+    AddButton,
 }
 
 pub fn run_home(
@@ -85,7 +92,7 @@ struct HomeApp {
     message: Option<String>,
     last_click: Option<LastClick>,
     hover_toolbar: Option<ToolbarAction>,
-    hover_tab: Option<usize>,
+    hover_tab: Option<TabHitKind>,
     numeric_input: Option<NumericInput>,
     tabs: Vec<ResolvedTab>,
     active_tab_idx: usize,

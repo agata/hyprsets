@@ -39,17 +39,16 @@ impl HomeApp {
 
     pub(super) fn build_tabs(&self) -> (Vec<ResolvedTab>, Vec<String>, HashMap<String, String>) {
         let mut warnings = Vec::new();
-        let mut tabs = Vec::new();
         let mut labels: HashMap<String, String> = HashMap::new();
         let all_tab = ResolvedTab {
             id: ALL_TAB_ID.to_string(),
             label: "All".to_string(),
             indices: (0..self.cfg.worksets.len()).collect(),
         };
+        let mut tabs = vec![all_tab];
 
         let tab_enabled = self.cfg.version >= 2 || !self.cfg.tabs.is_empty();
         if self.cfg.tabs.is_empty() || !tab_enabled {
-            tabs.push(all_tab);
             return (tabs, warnings, labels);
         }
 
@@ -111,8 +110,6 @@ impl HomeApp {
                 indices,
             });
         }
-
-        tabs.push(all_tab);
 
         (tabs, warnings, labels)
     }

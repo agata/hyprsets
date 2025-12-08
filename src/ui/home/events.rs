@@ -4,8 +4,8 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{
-    DialogField, HomeApp, HomeExit, LastClick, Mode, TabFormField, TabMenuItem, ToolbarAction,
-    UiMeta, cycle_new_dialog_tab,
+    DialogField, HomeApp, HomeExit, LastClick, Mode, TabFormField, TabHitKind, TabMenuItem,
+    ToolbarAction, UiMeta, cycle_new_dialog_tab,
 };
 
 impl HomeApp {
@@ -405,8 +405,15 @@ impl HomeApp {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(tab_idx) = self.hit_tab(mouse.column, mouse.row, ui) {
-                    self.switch_tab(tab_idx)?;
+                if let Some(tab_target) = self.hit_tab(mouse.column, mouse.row, ui) {
+                    match tab_target {
+                        TabHitKind::Tab(idx) => {
+                            self.switch_tab(idx)?;
+                        }
+                        TabHitKind::AddButton => {
+                            self.start_tab_new()?;
+                        }
+                    }
                 } else if let Some(idx) = self.row_from_y(mouse.row, ui) {
                     let double = self.is_double_click(idx);
                     self.select_index(idx, ui.visible_rows);

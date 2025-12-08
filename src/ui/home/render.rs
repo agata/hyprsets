@@ -3,14 +3,14 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table, Tabs},
 };
 use unicode_width::UnicodeWidthStr;
 
 use super::{
     ButtonHit, ConfirmRunState, DialogField, HomeApp, Mode, NewDialogState, TabAssignState,
-    TabForm, TabFormField, TabHit, TabMenuItem, TabMenuState, TabRenameState, ToolbarAction,
-    UiMeta,
+    TabForm, TabFormField, TabHit, TabHitKind, TabMenuItem, TabMenuState, TabRenameState,
+    ToolbarAction, UiMeta,
 };
 
 impl HomeApp {
@@ -19,7 +19,7 @@ impl HomeApp {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1),
+                Constraint::Length(3),
                 Constraint::Min(8),
                 Constraint::Length(1),
                 Constraint::Length(1),
@@ -31,11 +31,11 @@ impl HomeApp {
         let status_area = chunks[2];
         let toolbar_area = chunks[3];
 
-        let visible_rows = list_area.height.saturating_sub(3) as usize; // border + header
+        let visible_rows = list_area.height.saturating_sub(2) as usize; // header + bottom border
         let mut ui_meta = UiMeta {
             visible_rows: visible_rows.max(1),
             visible_offset: self.scroll,
-            data_start_y: list_area.y.saturating_add(2), // border + header
+            data_start_y: list_area.y.saturating_add(1), // header row
             ..UiMeta::default()
         };
 
@@ -75,43 +75,101 @@ impl HomeApp {
         ui_meta
     }
 
-    fn render_tabs(&self, f: &mut Frame, area: Rect, hover: Option<usize>) -> Vec<TabHit> {
-        let mut spans: Vec<Span> = Vec::new();
-        let mut hits = Vec::new();
-        let mut cursor_x = area.x.saturating_add(1);
+    fn render_tabs(&self, f: &mut Frame, area: Rect, hover: Option<TabHitKind>) -> Vec<TabHit> {
+        let tab_block = Block::default()
+            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+            .padding(Padding::horizontal(1));
+        let inner = tab_block.inner(area);
+        let divider = "│";
+        let divider_width = UnicodeWidthStr::width(divider) as u16;
+        let padding_width = 2; // default Tabs padding: 1 space on each side
 
+        let mut hits = Vec::new();
+        let mut cursor_x = inner.x;
+        let y_start = inner.y;
+        let y_end = inner.y;
+
+        let mut titles: Vec<Line> = Vec::new();
         for (idx, tab) in self.tabs.iter().enumerate() {
             if idx > 0 {
-                spans.push(Span::raw(" "));
-                cursor_x = cursor_x.saturating_add(1);
+                cursor_x = cursor_x.saturating_add(divider_width);
             }
-            let label = format!("[{}]", tab.label);
-            let width = UnicodeWidthStr::width(label.as_str()) as u16;
-            let active = idx == self.active_tab_idx;
-            let style = if Some(idx) == hover {
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::UNDERLINED | Modifier::BOLD)
-            } else if active {
+
+            let style = if matches!(hover, Some(TabHitKind::Tab(h)) if h == idx) {
                 Style::default()
                     .fg(Color::Yellow)
                     .add_modifier(Modifier::BOLD)
             } else {
                 Style::default()
             };
-            spans.push(Span::styled(label.clone(), style));
+
+            let label = format!(" {} ", tab.label);
+            let width = UnicodeWidthStr::width(label.as_str()) as u16 + padding_width;
             hits.push(TabHit {
                 x_start: cursor_x,
                 x_end: cursor_x + width.saturating_sub(1),
-                y: area.y,
-                idx,
+                y_start,
+                y_end,
+                kind: TabHitKind::Tab(idx),
             });
             cursor_x = cursor_x.saturating_add(width);
+
+            titles.push(Line::styled(label, style));
         }
 
-        let line = Line::from(spans);
-        let paragraph = Paragraph::new(line);
-        f.render_widget(paragraph, area);
+        if !self.tabs.is_empty() {
+            cursor_x = cursor_x.saturating_add(divider_width);
+        }
+        let add_style = if matches!(hover, Some(TabHitKind::AddButton)) {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        let add_label = " + Add";
+        let add_width = UnicodeWidthStr::width(add_label) as u16 + padding_width;
+        hits.push(TabHit {
+            x_start: cursor_x,
+            x_end: cursor_x + add_width.saturating_sub(1),
+            y_start,
+            y_end,
+            kind: TabHitKind::AddButton,
+        });
+        titles.push(Line::styled(add_label, add_style));
+
+        let tabs = Tabs::new(titles)
+            .block(tab_block)
+            .divider(Span::raw(divider))
+            .select(self.active_tab_idx)
+            .style(Style::default())
+            .highlight_style(
+                Style::default()
+                    .bg(Color::Cyan)
+                    .fg(Color::Black)
+                    .add_modifier(Modifier::BOLD),
+            );
+
+        f.render_widget(tabs, area);
+        if area.width > 0 && area.height > 0 {
+            let bottom_y = area.y + area.height - 1;
+            let mut bottom_chars = vec!['─'; area.width as usize];
+            if let Some(first) = bottom_chars.first_mut() {
+                *first = '│';
+            }
+            if let Some(last) = bottom_chars.last_mut() {
+                *last = '│';
+            }
+            let bottom_line: String = bottom_chars.into_iter().collect();
+            let bottom = Paragraph::new(Span::raw(bottom_line));
+            let bottom_area = Rect {
+                x: area.x,
+                y: bottom_y,
+                width: area.width,
+                height: 1,
+            };
+            f.render_widget(bottom, bottom_area);
+        }
         hits
     }
 
@@ -119,8 +177,7 @@ impl HomeApp {
         let total = self.current_tab_len();
         if total == 0 {
             let block = Block::default()
-                .borders(Borders::ALL)
-                .title("HyprSets — Worksets");
+                .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM);
             f.render_widget(block.clone(), area);
             let inner = block.inner(area);
             let msg = Paragraph::new("No worksets in this tab. Press 'n' to create.")
@@ -172,12 +229,6 @@ impl HomeApp {
             })
             .collect();
 
-        let selected_str = self
-            .table_state
-            .selected()
-            .map(|i| format!("{}/{}", i + 1, total))
-            .unwrap_or_else(|| format!("0/{}", total));
-
         let header = Row::new(vec!["No", "Name", "Description", "Tab", "Workspace"]).style(
             Style::default()
                 .fg(Color::Yellow)
@@ -194,13 +245,10 @@ impl HomeApp {
 
         let table = Table::new(rows, widths)
             .header(header)
-            .block(Block::default().borders(Borders::ALL).title(format!(
-                        "HyprSets — Worksets [{}]   {}",
-                        self.current_tab()
-                            .map(|t| t.label.as_str())
-                            .unwrap_or("All"),
-                        selected_str
-                    )))
+            .block(
+                Block::default()
+                    .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM),
+            )
             .highlight_style(
                 Style::default()
                     .bg(Color::Cyan)
@@ -226,17 +274,16 @@ impl HomeApp {
             .current_tab()
             .map(|t| t.label.as_str())
             .unwrap_or("All");
-        let msg_body = self.message.as_deref().unwrap_or("");
+        let msg_body = self.message.as_deref().unwrap_or("").to_string();
         let left = if msg_body.is_empty() {
-            format!("[Tab: {tab_label}]")
+            format!("Tab: {tab_label}")
         } else {
-            format!("[Tab: {tab_label}] {msg_body}")
+            format!("Tab: {tab_label} — {msg_body}")
         };
-
-        let msg_width = UnicodeWidthStr::width(left.as_str());
+        let left_width = UnicodeWidthStr::width(left.as_str());
         let pos_width = UnicodeWidthStr::width(pos.as_str());
         let total_width = area.width as usize;
-        let spacing = total_width.saturating_sub(msg_width + pos_width + 1);
+        let spacing = total_width.saturating_sub(left_width + pos_width + 1);
         let line = format!("{left}{pad}{pos}", pad = " ".repeat(spacing));
         let paragraph = Paragraph::new(Line::from(line));
         f.render_widget(paragraph, area);

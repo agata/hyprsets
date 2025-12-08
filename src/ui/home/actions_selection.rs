@@ -28,11 +28,11 @@ impl HomeApp {
             .map(|hit| hit.action)
     }
 
-    pub(super) fn hit_tab(&self, x: u16, y: u16, ui: &super::UiMeta) -> Option<usize> {
+    pub(super) fn hit_tab(&self, x: u16, y: u16, ui: &super::UiMeta) -> Option<super::TabHitKind> {
         ui.tab_hits
             .iter()
-            .find(|hit| hit.y == y && x >= hit.x_start && x <= hit.x_end)
-            .map(|hit| hit.idx)
+            .find(|hit| x >= hit.x_start && x <= hit.x_end && y >= hit.y_start && y <= hit.y_end)
+            .map(|hit| hit.kind)
     }
 
     pub(super) fn ensure_offset(&mut self, visible_rows: usize) {
