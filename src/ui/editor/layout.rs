@@ -14,6 +14,7 @@ pub(super) fn ensure_layout(ws: Workset) -> LayoutNode {
             command: cmd,
             cwd: None,
             env: Default::default(),
+            wait_after_ms: None,
         })
     }
 }
@@ -97,6 +98,7 @@ pub(super) fn replace_leaf_with_split(
                 command: String::new(),
                 cwd: None,
                 env: Default::default(),
+                wait_after_ms: None,
             });
             let old_leaf = LayoutNode::Leaf(existing.clone());
             let split = SplitNode {
@@ -322,6 +324,7 @@ mod tests {
             command: format!("cmd{id}"),
             cwd: None,
             env: Default::default(),
+            wait_after_ms: None,
         })
     }
 
@@ -411,6 +414,7 @@ mod tests {
             command: "new".into(),
             cwd: None,
             env: Default::default(),
+            wait_after_ms: None,
         };
         assert!(set_leaf_at_path(
             &mut node,

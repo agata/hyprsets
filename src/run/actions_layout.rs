@@ -1,4 +1,7 @@
-use std::{thread, time::Instant};
+use std::{
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::{Context, Result, bail};
 use hyprland::{
@@ -7,7 +10,7 @@ use hyprland::{
     shared::{Address, HyprData, HyprDataActiveOptional},
 };
 
-use crate::config::{LayoutNode, Workset};
+use crate::config::{LayoutNode, WindowSlot, Workset};
 
 use super::{
     HYPR_SPLIT_MAX, HYPR_SPLIT_MIN, SLOT_LAUNCH_DELAY, WINDOW_APPEAR_TIMEOUT, WINDOW_POLL_INTERVAL,
@@ -38,7 +41,10 @@ pub(crate) fn run_commands(
         Dispatch::call(DispatchType::Exec(exec.as_str()))
             .with_context(|| format!("failed to exec command: {cmd}"))?;
         if idx + 1 < cmds.len() {
-            println!(" waiting {:?} before next command...", SLOT_LAUNCH_DELAY);
+            println!(
+                " waiting {} before next command...",
+                format_delay(SLOT_LAUNCH_DELAY)
+            );
             thread::sleep(SLOT_LAUNCH_DELAY);
         }
     }
@@ -121,11 +127,18 @@ fn run_layout_inner(
 
             let remaining = total_slots.saturating_sub(*launched);
             if remaining > 0 {
+                let launch_delay = slot_launch_delay(slot);
                 println!(
-                    " waiting {:?} before next slot... (remaining: {})",
-                    SLOT_LAUNCH_DELAY, remaining
+                    " waiting {} ({}) before next slot... (remaining: {})",
+                    format_delay(launch_delay),
+                    if slot.wait_after_ms.is_some() {
+                        "custom wait_after_ms"
+                    } else {
+                        "default"
+                    },
+                    remaining
                 );
-                thread::sleep(SLOT_LAUNCH_DELAY);
+                thread::sleep(launch_delay);
             }
             Ok(anchor)
         }
@@ -221,6 +234,20 @@ fn run_layout_inner(
             };
             Ok(left_anchor.or(right_anchor).or(remaining_left))
         }
+    }
+}
+
+fn slot_launch_delay(slot: &WindowSlot) -> Duration {
+    slot.wait_after_ms
+        .map(Duration::from_millis)
+        .unwrap_or(SLOT_LAUNCH_DELAY)
+}
+
+fn format_delay(delay: Duration) -> String {
+    if delay.as_secs() > 0 {
+        format!("{:.2}s", delay.as_secs_f32())
+    } else {
+        format!("{}ms", delay.as_millis())
     }
 }
 
@@ -379,6 +406,7 @@ fn wait_for_clients_on_workspace(
 mod tests {
     use super::*;
     use crate::config::SplitDirection;
+    use std::time::Duration;
 
     #[test]
     fn hypr_split_ratio_clamps_bounds() {
@@ -397,6 +425,7 @@ mod tests {
                 command: "a".into(),
                 cwd: None,
                 env: Default::default(),
+                wait_after_ms: None,
             })),
             right: Box::new(LayoutNode::Split(crate::config::SplitNode {
                 direction: SplitDirection::Vertical,
@@ -406,15 +435,41 @@ mod tests {
                     command: "b".into(),
                     cwd: None,
                     env: Default::default(),
+                    wait_after_ms: None,
                 })),
                 right: Box::new(LayoutNode::Leaf(crate::config::WindowSlot {
                     slot_id: 3,
                     command: "c".into(),
                     cwd: None,
                     env: Default::default(),
+                    wait_after_ms: None,
                 })),
             })),
         });
         assert_eq!(count_slots(&layout), 3);
+    }
+
+    #[test]
+    fn slot_launch_delay_prefers_override() {
+        let mut slot = crate::config::WindowSlot {
+            slot_id: 1,
+            command: "cmd".into(),
+            cwd: None,
+            env: Default::default(),
+            wait_after_ms: None,
+        };
+        assert_eq!(slot_launch_delay(&slot), SLOT_LAUNCH_DELAY);
+
+        slot.wait_after_ms = Some(2_500);
+        assert_eq!(slot_launch_delay(&slot), Duration::from_millis(2_500));
+    }
+
+    #[test]
+    fn format_delay_outputs_human_friendly_units() {
+        assert_eq!(format_delay(Duration::from_millis(150)), "150ms");
+        assert_eq!(format_delay(Duration::from_millis(1_500)), "1.50s");
+        assert_eq!(format_delay(Duration::from_millis(999)), "999ms");
+        assert_eq!(format_delay(Duration::from_millis(1_000)), "1.00s");
+        assert_eq!(format_delay(Duration::from_millis(1_001)), "1.00s");
     }
 }

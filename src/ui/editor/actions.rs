@@ -114,10 +114,17 @@ impl EditorApp {
             .current_leaf()
             .map(|slot| slot.command.clone())
             .unwrap_or_default();
+        let current_wait = self
+            .current_leaf()
+            .and_then(|slot| slot.wait_after_ms.map(|ms| ms.to_string()))
+            .unwrap_or_default();
         let cursor = current_cmd.len();
-        self.mode = Mode::EditCommand {
+        self.mode = Mode::EditSlot {
             buffer: current_cmd,
             cursor,
+            wait_ms: current_wait.clone(),
+            wait_cursor: current_wait.len(),
+            focus: super::SlotField::Command,
         };
     }
 

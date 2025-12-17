@@ -3,6 +3,8 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Added
+- Per-slot launch delay override via `wait_after_ms` (defaults to 1s), editable from the layout editor slot dialog.
 
 ## [0.3.1] - 2025-12-08
 ### Changed

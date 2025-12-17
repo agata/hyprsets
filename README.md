@@ -58,6 +58,7 @@ Commands:
 
 Launch behavior:
 - If a layout is present, HyprSets traverses it, launching each slot and applying split ratios as windows appear.
+- Slot/command launches wait 1s by default; set `wait_after_ms` on a layout slot to change the gap before the next slot (useful for slow-starting apps).
 - Without a layout, commands are executed sequentially with a short delay.
 - `workspace` (optional per workset) forces launch on a specific workspace name/ID or `special[:name]`; empty/missing uses the currently active workspace.
 - On launch it asks whether to close existing windows on the active workspace (skipped if none are present).
@@ -152,6 +153,7 @@ Notes:
 - `workspace` accepts a workspace name or numeric id. Use `special` or `special:<name>` to target scratchpad workspaces. Leaving it empty (or omitting it) keeps the "use current workspace" behavior.
 - `cwd` and `env` can be set per workset or per slot; slot values override workset defaults.
 - `ratio` is converted to Hyprland's `splitratio exact` and kept within a safe range.
+- Each layout slot can override the default 1s pause before the next slot with `wait_after_ms = <milliseconds>`; omit it to keep the default. Use this for slow-to-launch apps so the next slot waits for the window to appear. You can set this from the layout editor's slot dialog (Enter/`c` on a slot).
 - Slot `command` strings are executed via `hyprctl dispatch exec`, so shell features should be quoted accordingly.
 - Each workset must have a unique `id`; `name` and `desc` are shown in the UI.
 

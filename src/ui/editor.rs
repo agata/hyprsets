@@ -74,9 +74,12 @@ enum DialogField {
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Mode {
     Normal,
-    EditCommand {
+    EditSlot {
         buffer: String,
         cursor: usize,
+        wait_ms: String,
+        wait_cursor: usize,
+        focus: SlotField,
     },
     EditWorkset {
         form: WorksetForm,
@@ -113,6 +116,12 @@ struct WorksetForm {
     cursor_name: usize,
     cursor_workspace: usize,
     cursor_desc: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SlotField {
+    Command,
+    Wait,
 }
 
 #[derive(Debug)]

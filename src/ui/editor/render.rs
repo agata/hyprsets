@@ -1,3 +1,4 @@
+use crate::run::SLOT_LAUNCH_DELAY;
 use ratatui::{
     Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -9,7 +10,9 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 use crate::config::{LayoutNode, SplitDirection};
 
-use super::{DialogField, EditorApp, Mode, Side, ToolbarAction, UiMeta, layout::split_area};
+use super::{
+    DialogField, EditorApp, Mode, Side, SlotField, ToolbarAction, UiMeta, layout::split_area,
+};
 
 impl EditorApp {
     pub(super) fn draw(&mut self, f: &mut Frame) -> UiMeta {
@@ -54,9 +57,13 @@ impl EditorApp {
         let toolbar_hits = self.render_toolbar(f, chunks[3], self.hover_toolbar);
 
         match &self.mode {
-            Mode::EditCommand { buffer, cursor } => {
-                self.render_cmd_dialog(f, area, buffer, *cursor)
-            }
+            Mode::EditSlot {
+                buffer,
+                cursor,
+                wait_ms,
+                wait_cursor,
+                focus,
+            } => self.render_slot_dialog(f, area, buffer, *cursor, wait_ms, *wait_cursor, *focus),
             Mode::EditWorkset { form } => self.render_workset_dialog(f, area, form),
             Mode::ConfirmDelete { target: _, slot_id } => {
                 self.render_confirm_delete(f, area, *slot_id)
@@ -200,7 +207,7 @@ impl EditorApp {
     ) {
         let mode_label = match self.mode {
             Mode::Normal => "Normal",
-            Mode::EditCommand { .. } => "Cmd",
+            Mode::EditSlot { .. } => "Slot",
             Mode::EditWorkset { .. } => "Workset",
             Mode::ConfirmDelete { .. } => "Delete?",
         };
@@ -279,11 +286,21 @@ impl EditorApp {
         hits
     }
 
-    fn render_cmd_dialog(&self, f: &mut Frame, area: Rect, buffer: &str, cursor: usize) {
-        let popup = centered_rect(80, 30, area);
+    #[allow(clippy::too_many_arguments)]
+    fn render_slot_dialog(
+        &self,
+        f: &mut Frame,
+        area: Rect,
+        buffer: &str,
+        cursor: usize,
+        wait_ms: &str,
+        wait_cursor: usize,
+        focus: SlotField,
+    ) {
+        let popup = centered_rect(80, 70, area);
         f.render_widget(Clear, popup);
         let block = Block::default()
-            .title("Edit Command")
+            .title("Edit Slot")
             .borders(Borders::ALL)
             .style(Style::default().bg(Color::Black));
         let inner = block.inner(popup);
@@ -291,16 +308,45 @@ impl EditorApp {
         f.render_widget(block, popup);
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(3)])
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Min(8),
+                Constraint::Length(4),
+            ])
             .split(inner);
 
         let hint = Paragraph::new(Line::from(format!(
-            "Enter: Save  Esc: Cancel  (editing #{})",
+            "Enter: Save  Tab/Shift+Tab: Switch field  Esc: Cancel  (editing #{})",
             self.current_slot_id().unwrap_or(0)
         )));
         f.render_widget(hint, chunks[0]);
 
-        let input_block = Block::default().borders(Borders::ALL).title("Command");
+        let cmd_title = if matches!(focus, SlotField::Command) {
+            Span::styled(
+                "Command",
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw("Command")
+        };
+        let wait_label = format!(
+            "Wait after (ms, empty = default {}ms)",
+            SLOT_LAUNCH_DELAY.as_millis()
+        );
+        let wait_title = if matches!(focus, SlotField::Wait) {
+            Span::styled(
+                wait_label,
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw(wait_label)
+        };
+
+        let input_block = Block::default().borders(Borders::ALL).title(cmd_title);
         let input_area = input_block.inner(chunks[1]);
         let (wrapped_lines, cursor_col, cursor_line) =
             wrap_input_text(buffer, cursor, input_area.width);
@@ -310,16 +356,37 @@ impl EditorApp {
             0
         };
 
-        let cmd_text = Paragraph::new(wrapped_lines.join("\n")).scroll((scroll, 0));
+        let cmd_text = Paragraph::new(wrapped_lines.join("\n"))
+            .scroll((scroll, 0))
+            .style(if matches!(focus, SlotField::Command) {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            });
         f.render_widget(input_block, chunks[1]);
         f.render_widget(cmd_text, input_area);
 
-        if input_area.width > 0 && input_area.height > 0 {
-            let cursor_x = input_area.x + cursor_col;
-            let cursor_y = input_area
-                .y
-                .saturating_add(cursor_line.saturating_sub(scroll));
-            f.set_cursor(cursor_x, cursor_y);
+        let wait_block = Block::default().borders(Borders::ALL).title(wait_title);
+        let wait_area = wait_block.inner(chunks[2]);
+        let wait_text = Paragraph::new(wait_ms.to_string()).alignment(Alignment::Left);
+        f.render_widget(wait_block, chunks[2]);
+        f.render_widget(wait_text, wait_area);
+
+        match focus {
+            SlotField::Command => {
+                if input_area.width > 0 && input_area.height > 0 {
+                    let cursor_x = input_area.x + cursor_col;
+                    let cursor_y = input_area
+                        .y
+                        .saturating_add(cursor_line.saturating_sub(scroll));
+                    f.set_cursor(cursor_x, cursor_y);
+                }
+            }
+            SlotField::Wait => {
+                let cursor_x = wait_area.x + width_up_to(wait_ms, wait_cursor);
+                let cursor_y = wait_area.y;
+                f.set_cursor(cursor_x, cursor_y);
+            }
         }
     }
 

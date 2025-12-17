@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 
 use super::{
-    ActiveDrag, EditorApp, EditorExit, Mode, Side, ToolbarAction, UiMeta,
+    ActiveDrag, EditorApp, EditorExit, Mode, Side, SlotField, ToolbarAction, UiMeta,
     layout::{ratio_from_position, set_ratio},
     render::{hit_split, hit_toolbar, point_in_rect},
 };
@@ -13,15 +13,31 @@ impl EditorApp {
     pub(super) fn handle_key(&mut self, key: KeyEvent) -> Result<Option<EditorExit>> {
         match self.mode.clone() {
             Mode::Normal => self.handle_key_normal(key),
-            Mode::EditCommand {
+            Mode::EditSlot {
                 mut buffer,
                 mut cursor,
+                mut wait_ms,
+                mut wait_cursor,
+                mut focus,
             } => {
-                let out = self.handle_key_cmd(key, &mut buffer, &mut cursor);
+                let out = self.handle_key_slot(
+                    key,
+                    &mut buffer,
+                    &mut cursor,
+                    &mut wait_ms,
+                    &mut wait_cursor,
+                    &mut focus,
+                );
                 if matches!(self.mode, Mode::Normal) {
                     // stayed in normal
                 } else {
-                    self.mode = Mode::EditCommand { buffer, cursor };
+                    self.mode = Mode::EditSlot {
+                        buffer,
+                        cursor,
+                        wait_ms,
+                        wait_cursor,
+                        focus,
+                    };
                 }
                 out
             }
@@ -72,51 +88,102 @@ impl EditorApp {
         Ok(None)
     }
 
-    fn handle_key_cmd(
+    fn handle_key_slot(
         &mut self,
         key: KeyEvent,
         buffer: &mut String,
         cursor: &mut usize,
+        wait_ms: &mut String,
+        wait_cursor: &mut usize,
+        focus: &mut SlotField,
     ) -> Result<Option<EditorExit>> {
         match key.code {
             KeyCode::Esc => {
                 self.mode = Mode::Normal;
             }
+            KeyCode::Tab => {
+                *focus = next_slot_field(*focus);
+            }
+            KeyCode::BackTab => {
+                *focus = prev_slot_field(*focus);
+            }
             KeyCode::Enter => {
                 if let Some(slot) = self.current_leaf_mut() {
+                    let parsed_wait = match parse_wait_input(wait_ms.trim()) {
+                        Ok(val) => val,
+                        Err(msg) => {
+                            self.message = Some(msg.into());
+                            return Ok(None);
+                        }
+                    };
                     slot.command = buffer.trim().to_string();
+                    slot.wait_after_ms = parsed_wait;
                 }
                 self.mark_changed();
                 self.mode = Mode::Normal;
             }
-            KeyCode::Backspace => {
-                if *cursor > 0
-                    && let Some(prev) = prev_grapheme_start(buffer, *cursor)
-                {
-                    buffer.drain(prev..*cursor);
-                    *cursor = prev;
+            KeyCode::Backspace => match focus {
+                SlotField::Command => {
+                    if *cursor > 0
+                        && let Some(prev) = prev_grapheme_start(buffer, *cursor)
+                    {
+                        buffer.drain(prev..*cursor);
+                        *cursor = prev;
+                    }
                 }
-            }
-            KeyCode::Char(ch) => {
-                buffer.insert(*cursor, ch);
-                *cursor += ch.len_utf8();
-            }
-            KeyCode::Left => {
-                if let Some(prev) = prev_grapheme_start(buffer, *cursor) {
-                    *cursor = prev;
+                SlotField::Wait => {
+                    if *wait_cursor > 0
+                        && let Some(prev) = prev_grapheme_start(wait_ms, *wait_cursor)
+                    {
+                        wait_ms.drain(prev..*wait_cursor);
+                        *wait_cursor = prev;
+                    }
                 }
-            }
-            KeyCode::Right => {
-                if let Some(next) = next_grapheme_end(buffer, *cursor) {
-                    *cursor = next;
+            },
+            KeyCode::Char(ch) => match focus {
+                SlotField::Command => {
+                    buffer.insert(*cursor, ch);
+                    *cursor += ch.len_utf8();
                 }
-            }
-            KeyCode::Home => {
-                *cursor = 0;
-            }
-            KeyCode::End => {
-                *cursor = buffer.len();
-            }
+                SlotField::Wait => {
+                    if ch.is_ascii_digit() {
+                        wait_ms.insert(*wait_cursor, ch);
+                        *wait_cursor += ch.len_utf8();
+                    }
+                }
+            },
+            KeyCode::Left => match focus {
+                SlotField::Command => {
+                    if let Some(prev) = prev_grapheme_start(buffer, *cursor) {
+                        *cursor = prev;
+                    }
+                }
+                SlotField::Wait => {
+                    if let Some(prev) = prev_grapheme_start(wait_ms, *wait_cursor) {
+                        *wait_cursor = prev;
+                    }
+                }
+            },
+            KeyCode::Right => match focus {
+                SlotField::Command => {
+                    if let Some(next) = next_grapheme_end(buffer, *cursor) {
+                        *cursor = next;
+                    }
+                }
+                SlotField::Wait => {
+                    if let Some(next) = next_grapheme_end(wait_ms, *wait_cursor) {
+                        *wait_cursor = next;
+                    }
+                }
+            },
+            KeyCode::Home => match focus {
+                SlotField::Command => *cursor = 0,
+                SlotField::Wait => *wait_cursor = 0,
+            },
+            KeyCode::End => match focus {
+                SlotField::Command => *cursor = buffer.len(),
+                SlotField::Wait => *wait_cursor = wait_ms.len(),
+            },
             _ => {}
         }
         Ok(None)
@@ -443,6 +510,31 @@ fn prev_field(focus: super::DialogField) -> super::DialogField {
     }
 }
 
+fn next_slot_field(focus: SlotField) -> SlotField {
+    match focus {
+        SlotField::Command => SlotField::Wait,
+        SlotField::Wait => SlotField::Command,
+    }
+}
+
+fn prev_slot_field(focus: SlotField) -> SlotField {
+    match focus {
+        SlotField::Command => SlotField::Wait,
+        SlotField::Wait => SlotField::Command,
+    }
+}
+
+fn parse_wait_input(raw: &str) -> Result<Option<u64>, &'static str> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return Ok(None);
+    }
+    trimmed
+        .parse::<u64>()
+        .map(Some)
+        .map_err(|_| "wait_after_ms must be an integer (ms)")
+}
+
 fn prev_grapheme_start(text: &str, cursor: usize) -> Option<usize> {
     if cursor == 0 {
         return None;
@@ -478,6 +570,28 @@ mod tests {
             next_field(super::super::DialogField::Desc),
             super::super::DialogField::Id
         ));
+    }
+
+    #[test]
+    fn slot_field_toggles_between_command_and_wait() {
+        assert!(matches!(
+            next_slot_field(super::SlotField::Command),
+            super::SlotField::Wait
+        ));
+        assert!(matches!(
+            prev_slot_field(super::SlotField::Wait),
+            super::SlotField::Command
+        ));
+    }
+
+    #[test]
+    fn parse_wait_input_accepts_empty_and_numbers() {
+        assert_eq!(parse_wait_input(""), Ok(None));
+        assert_eq!(parse_wait_input(" 1500 "), Ok(Some(1500)));
+        assert_eq!(parse_wait_input("   "), Ok(None));
+        assert_eq!(parse_wait_input("0"), Ok(Some(0)));
+        assert!(parse_wait_input("abc").is_err());
+        assert!(parse_wait_input("-1").is_err());
     }
 
     #[test]

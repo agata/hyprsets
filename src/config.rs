@@ -69,6 +69,8 @@ pub struct WindowSlot {
     pub cwd: Option<PathBuf>,
     #[serde(default)]
     pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub wait_after_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +137,7 @@ impl AppConfig {
                 command: String::from(r#"code -n "$HOME/ws/demo""#),
                 cwd: None,
                 env: HashMap::new(),
+                wait_after_ms: None,
             })),
             right: Box::new(LayoutNode::Leaf(WindowSlot {
                 slot_id: 2,
@@ -143,6 +146,7 @@ impl AppConfig {
                 ),
                 cwd: None,
                 env: HashMap::new(),
+                wait_after_ms: None,
             })),
         });
 

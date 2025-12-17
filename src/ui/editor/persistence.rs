@@ -100,6 +100,7 @@ mod tests {
             command: command.to_string(),
             cwd: None,
             env: Default::default(),
+            wait_after_ms: None,
         })
     }
 
