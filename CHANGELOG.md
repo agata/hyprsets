@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.3] - 2025-12-19
+### Fixed
+- Preserve workset order within a tab when editing or reassigning worksets.
+
 ## [0.3.2] - 2025-12-17
 ### Added
 - Per-slot launch delay override via `wait_after_ms` (defaults to 1s), editable from the layout editor slot dialog.
