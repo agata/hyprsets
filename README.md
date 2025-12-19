@@ -46,6 +46,23 @@ Packaged tarball:
 ```
 Artifacts are written under `dist/` and include a desktop entry and install script.
 
+## Updating
+If you installed from GitHub Releases, rerun the same install flow to overwrite the existing binary:
+- Quick install (latest release):
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/agata/hyprsets/main/scripts/install-latest.sh)"
+```
+- Manual install: download the new `hyprsets-<version>-<target>.tar.gz`, extract it, and run the bundled `install.sh` again.
+
+If you installed from source:
+```bash
+git pull
+cargo install --path . --force
+# or rebuild locally
+cargo build --release
+```
+Rebuilding or reinstalling replaces the existing binary in `~/.cargo/bin/hyprsets` (or your `target/release/hyprsets` if you run it directly).
+
 ## Usage
 Config path: `~/.config/hyprsets/hyprsets.toml` by default. Use `--config <path>` to override. First run writes a sample file if none exists.
 
