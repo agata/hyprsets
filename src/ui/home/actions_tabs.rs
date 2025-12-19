@@ -289,12 +289,27 @@ impl HomeApp {
             return true;
         }
         self.ensure_tab_version();
+        let mut previous_tab_id = None;
+        let mut previous_pos = None;
+        for tab in &self.cfg.tabs {
+            if let Some(pos) = tab.worksets.iter().position(|id| id == workset_id) {
+                previous_tab_id = Some(tab.id.clone());
+                previous_pos = Some(pos);
+                break;
+            }
+        }
         for tab in self.cfg.tabs.iter_mut() {
             tab.worksets.retain(|id| id != workset_id);
         }
         if let Some(target) = tab_id {
             if let Some(tab) = self.cfg.tabs.iter_mut().find(|t| t.id == target) {
-                tab.worksets.push(workset_id.to_string());
+                let insert_at = if previous_tab_id.as_deref() == Some(target) {
+                    previous_pos.unwrap_or(tab.worksets.len())
+                } else {
+                    tab.worksets.len()
+                }
+                .min(tab.worksets.len());
+                tab.worksets.insert(insert_at, workset_id.to_string());
             } else {
                 self.message = Some("Tab not found".into());
                 return false;
@@ -378,5 +393,79 @@ impl HomeApp {
 
     pub(super) fn has_user_tabs(&self) -> bool {
         (self.cfg.version >= 2 || !self.cfg.tabs.is_empty()) && !self.cfg.tabs.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::Mode;
+    use super::HomeApp;
+    use crate::{
+        config::{AppConfig, TabConfig, Workset},
+        state::AppState,
+    };
+    use ratatui::widgets::TableState;
+    use std::path::PathBuf;
+
+    fn sample_workset(id: &str) -> Workset {
+        Workset {
+            id: id.to_string(),
+            name: format!("Workset {id}"),
+            desc: String::new(),
+            workspace: None,
+            commands: vec![],
+            cwd: None,
+            env: Default::default(),
+            layout: None,
+        }
+    }
+
+    fn test_app(cfg: AppConfig) -> HomeApp {
+        HomeApp {
+            cfg,
+            config_path: PathBuf::new(),
+            state_path: PathBuf::new(),
+            state: AppState::default(),
+            table_state: TableState::default(),
+            scroll: 0,
+            mode: Mode::Normal,
+            message: None,
+            last_click: None,
+            hover_toolbar: None,
+            hover_tab: None,
+            numeric_input: None,
+            tabs: Vec::new(),
+            active_tab_idx: 0,
+            tab_selected_ids: Default::default(),
+            workset_tab_labels: Default::default(),
+        }
+    }
+
+    #[test]
+    fn assign_workset_to_tab_preserves_order_when_same_tab() {
+        let cfg = AppConfig {
+            version: 2,
+            default_tab: None,
+            show_all_tab: None,
+            all_tab_position: None,
+            tabs: vec![TabConfig {
+                id: "tabA".into(),
+                label: "A".into(),
+                worksets: vec!["w1".into(), "w2".into(), "w3".into()],
+                include_unassigned: false,
+            }],
+            worksets: vec![
+                sample_workset("w1"),
+                sample_workset("w2"),
+                sample_workset("w3"),
+            ],
+        };
+
+        let mut app = test_app(cfg);
+        let ok = app.assign_workset_to_tab("w2", Some("tabA"));
+        assert!(ok);
+
+        let tab = app.cfg.tabs.iter().find(|t| t.id == "tabA").unwrap();
+        assert_eq!(tab.worksets, vec!["w1", "w2", "w3"]);
     }
 }

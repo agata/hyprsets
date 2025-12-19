@@ -56,6 +56,20 @@ pub(super) fn persist_workset(
         cfg.worksets.push(ws.clone());
     }
 
+    let mut previous_tab_id = None;
+    let mut previous_pos = None;
+    for tab in &cfg.tabs {
+        if let Some(pos) = tab
+            .worksets
+            .iter()
+            .position(|id| id == saved_id || id == &ws.id)
+        {
+            previous_tab_id = Some(tab.id.clone());
+            previous_pos = Some(pos);
+            break;
+        }
+    }
+
     // apply tab assignment (single tab membership)
     for tab in cfg.tabs.iter_mut() {
         tab.worksets.retain(|id| id != saved_id && id != &ws.id);
@@ -65,7 +79,13 @@ pub(super) fn persist_workset(
             if cfg.version < 2 {
                 cfg.version = 2;
             }
-            tab.worksets.push(ws.id.clone());
+            let insert_at = if previous_tab_id.as_deref() == Some(target_tab.as_str()) {
+                previous_pos.unwrap_or(tab.worksets.len())
+            } else {
+                tab.worksets.len()
+            }
+            .min(tab.worksets.len());
+            tab.worksets.insert(insert_at, ws.id.clone());
         } else {
             eprintln!("warning: selected tab '{target_tab}' not found; skipping assignment");
         }
@@ -102,6 +122,19 @@ mod tests {
             env: Default::default(),
             wait_after_ms: None,
         })
+    }
+
+    fn sample_workset(id: &str) -> Workset {
+        Workset {
+            id: id.to_string(),
+            name: format!("Workset {id}"),
+            desc: "".into(),
+            workspace: None,
+            commands: vec![],
+            cwd: None,
+            env: Default::default(),
+            layout: None,
+        }
     }
 
     fn cleanup(path: &Path) {
@@ -242,6 +275,39 @@ mod tests {
         };
         let err = persist_workset(&ws, "different", &None, &path).unwrap_err();
         assert!(format!("{err}").contains("ID already exists"));
+
+        cleanup(&path);
+    }
+
+    #[test]
+    fn persist_workset_preserves_tab_order_on_edit() {
+        let path = temp_config_path("persist_workset_order");
+        let cfg = AppConfig {
+            version: 2,
+            default_tab: None,
+            show_all_tab: None,
+            all_tab_position: None,
+            tabs: vec![TabConfig {
+                id: "tabA".into(),
+                label: "A".into(),
+                worksets: vec!["w1".into(), "w2".into(), "w3".into()],
+                include_unassigned: false,
+            }],
+            worksets: vec![
+                sample_workset("w1"),
+                sample_workset("w2"),
+                sample_workset("w3"),
+            ],
+        };
+        cfg.save(&path).unwrap();
+
+        let mut edited = sample_workset("w2");
+        edited.name = "Updated".into();
+        persist_workset(&edited, "w2", &Some("tabA".into()), &path).unwrap();
+
+        let updated = AppConfig::load_or_init(&path).unwrap();
+        let tab = updated.tabs.iter().find(|t| t.id == "tabA").unwrap();
+        assert_eq!(tab.worksets, vec!["w1", "w2", "w3"]);
 
         cleanup(&path);
     }
